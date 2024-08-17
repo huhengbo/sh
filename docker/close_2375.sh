@@ -118,7 +118,7 @@ restart_docker() {
 trap 'restore_backup; echo "An error occurred, restoring daemon.json."; exit 1' ERR
 
 # 主程序
-if check_docker_port; then
+# if check_docker_port; then
     echo "2375 port is open. Proceeding with configuration update."
     backup_daemon_json
     update_daemon_json
@@ -126,6 +126,6 @@ if check_docker_port; then
     reload_systemd
     restart_docker
     echo "Configuration update completed."
-else
-    echo "2375 port is not open. No changes needed."
-fi
+# else
+#     echo "2375 port is not open. No changes needed."
+# fi
