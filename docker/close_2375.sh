@@ -26,12 +26,22 @@ fi
 
 # 判断docker是否开放2375端口
 check_docker_port() {
-    if netstat -tuln | grep -q '0.0.0.0:2375'; then
-        return 0  # 端口开放
+    # 临时文件
+    local temp_file=$(mktemp)
+    
+    # 获取docker信息并保存到临时文件
+    docker system info > "$temp_file" 2>/dev/null
+
+    # 检查端口2375是否开放
+    if grep -q '0.0.0.0:2375' "$temp_file"; then
+        rm "$temp_file"
+        return 1
     else
-        return 1  # 端口未开放
+        rm "$temp_file"
+        return 0
     fi
 }
+
 
 # 备份daemon.json文件
 backup_daemon_json() {
