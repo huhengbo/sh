@@ -71,6 +71,7 @@ update_docker_service() {
     for path in /usr/lib/systemd/system/docker.service /lib/systemd/system/docker.service; do
         if [ -f "$path" ]; then
             ${SUDO_CMD} sed -i 's/ -H tcp:\/\/0.0.0.0:2375//g' "$path"
+            ${SUDO_CMD} sed -i 's/ --host tcp:\/\/0.0.0.0:2375//g' "$path"
             break
         fi
     done
