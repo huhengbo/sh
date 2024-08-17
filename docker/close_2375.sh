@@ -18,37 +18,72 @@ else
     SUDO_CMD=""
 fi
 
-# 检查daemon.json文件是否存在
-if [ -f /etc/docker/daemon.json ]; then
-    # 备份当前的daemon.json配置文件
-    ${SUDO_CMD} mv /etc/docker/daemon.json /etc/docker/daemon.json.bak
-
-    # 读取当前daemon.json文件内容
-    current_config=$(cat /etc/docker/daemon.json.bak)
-
-    # 解析当前配置以检查是否包含2375端口
-    if echo "$current_config" | grep -q 'tcp://0.0.0.0:2375'; then
-        # 移除2375端口
-        updated_config=$(echo "$current_config" | sed 's/\"tcp:\/\/0.0.0.0:2375\"//g')
-        # 更新daemon.json配置文件以移除2375端口
-        echo "$updated_config" | ${SUDO_CMD} tee /etc/docker/daemon.json > /dev/null
+# 判断docker是否开放2375端口
+check_docker_port() {
+    if docker info 2>/dev/null | grep -q 'tcp://0.0.0.0:2375'; then
+        return 0
     else
-        # 如果2375端口未配置，只是将备份文件放回去
-        ${SUDO_CMD} mv /etc/docker/daemon.json.bak /etc/docker/daemon.json
+        return 1
     fi
-else
-    echo "daemon.json file does not exist. Skipping related configuration updates."
-fi
+}
 
-# 确保docker服务不使用2375端口，覆盖docker.service文件中的ExecStart参数（如果存在2375端口配置）
-if [ -f /usr/lib/systemd/system/docker.service ]; then
-    ${SUDO_CMD} sed -i 's/ -H tcp:\/\/0.0.0.0:2375//g' /usr/lib/systemd/system/docker.service
-else
-    echo "docker.service file does not exist. Skipping related configuration updates."
-fi
+# 备份daemon.json文件
+backup_daemon_json() {
+    if [ -f /etc/docker/daemon.json ]; then
+        ${SUDO_CMD} cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
+    fi
+}
+
+# 更新daemon.json文件以移除2375端口
+update_daemon_json() {
+    if [ -f /etc/docker/daemon.json ]; then
+        current_config=$(cat /etc/docker/daemon.json.bak)
+        
+        # 使用jq移除tcp://0.0.0.0:2375配置
+        if command_exists jq; then
+            updated_config=$(echo "$current_config" | jq 'del(.hosts[] | select(. == "tcp://0.0.0.0:2375"))')
+            echo "$updated_config" | ${SUDO_CMD} tee /etc/docker/daemon.json > /dev/null
+        else
+            echo "jq is not installed. Manually handling JSON."
+            updated_config=$(echo "$current_config" | sed 's/\"tcp:\/\/0.0.0.0:2375\"//g')
+            echo "$updated_config" | ${SUDO_CMD} tee /etc/docker/daemon.json > /dev/null
+        fi
+    fi
+}
+
+# 确保docker服务不使用2375端口，检查多个常见路径
+update_docker_service() {
+    for path in /usr/lib/systemd/system/docker.service /lib/systemd/system/docker.service; do
+        if [ -f "$path" ]; then
+            ${SUDO_CMD} sed -i 's/ -H tcp:\/\/0.0.0.0:2375//g' "$path"
+            break
+        fi
+    done
+}
 
 # 重新加载systemd配置
-${SUDO_CMD} systemctl daemon-reload
+reload_systemd() {
+    ${SUDO_CMD} systemctl daemon-reload
+}
 
 # 重启docker服务
-${SUDO_CMD} systemctl restart docker
+restart_docker() {
+    if ! ${SUDO_CMD} systemctl restart docker; then
+        echo "Docker restart failed. Restoring backup."
+        ${SUDO_CMD} mv /etc/docker/daemon.json.bak /etc/docker/daemon.json
+        exit 1
+    fi
+}
+
+# 主程序
+if check_docker_port; then
+    echo "2375 port is open. Proceeding with configuration update."
+    backup_daemon_json
+    update_daemon_json
+    update_docker_service
+    reload_systemd
+    restart_docker
+    echo "Configuration update completed."
+else
+    echo "2375 port is not open. No changes needed."
+fi
