@@ -71,6 +71,12 @@ restart_docker() {
     if ! ${SUDO_CMD} systemctl restart docker; then
         echo "Docker restart failed. Restoring backup."
         ${SUDO_CMD} mv /etc/docker/daemon.json.bak /etc/docker/daemon.json
+        reload_systemd
+        if ! ${SUDO_CMD} systemctl restart docker; then
+            echo "Failed to restart Docker after restoring backup. Please check the system manually."
+            exit 1
+        fi
+        echo "Docker successfully restarted after restoring backup."
         exit 1
     fi
 }
