@@ -20,7 +20,7 @@ fi
 
 # 判断docker是否开放2375端口
 check_docker_port() {
-    if docker info 2>/dev/null | grep -q '0.0.0.0:2375'; then
+    if docker system info 2>/dev/null | grep -q '0.0.0.0:2375'; then
         return 0
     else
         return 1
