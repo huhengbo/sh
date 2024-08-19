@@ -1,0 +1,116 @@
+#!/bin/bash
+
+# 添加 registry-1.docker.io 到 /etc/hosts
+if ! grep -q '127.0.0.1 registry-1.docker.io' /etc/hosts; then
+  echo "127.0.0.1 registry-1.docker.io" >> /etc/hosts
+  echo "/etc/hosts 已添加 registry-1.docker.io 条目"
+fi
+
+# 查看 /etc/ld.so.preload 内容
+cat /etc/ld.so.preload
+
+# 确认 /etc/ld.so.preload 是否存在并处理权限
+if [ -f /etc/ld.so.preload ]; then
+  chattr -i /etc/ld.so.preload
+  echo '' > /etc/ld.so.preload
+  echo "/etc/ld.so.preload 文件已清空"
+fi
+
+# 删除特定恶意文件并解除权限限制
+files_to_remove=(
+  "/usr/lib/libsystemd-shared-165.so"
+  "/usr/local/lib/top.so"
+  "/usr/local/lib/masscan.so"
+  "/usr/local/lib/pnscan.so"
+  "/usr/local/lib/httpd.so"
+  "/usr/local/lib/bioset.so"
+  "/usr/local/lib/libsystemd.so"
+  "/usr/local/bin/pnscan"
+  "/tmp/.migo_worker/.migo_worker"
+  "/tmp/.migo"
+  "/etc/.httpd/.../httpd"
+  "/etc/.httpd/..../httpd"
+  "/var/spool/.system/.system"
+  "/var/tmp/.222/top"
+  "/usr/bin/.ssh/"
+  "/usr/local/bin/.cache/"
+)
+
+for file in "${files_to_remove[@]}"; do
+  if [ -f "$file" ] || [ -d "$file" ]; then
+    chattr -i "$file"
+    rm -rf "$file"
+    echo "$file 已删除"
+  fi
+done
+
+# 杀掉指定进程并删除相关文件
+processes_to_kill=(
+  "/usr/local/lib/libsystemd.so"
+  "/usr/local/bin/pnscan"
+  "/var/spool/.system/.system"
+  "/var/tmp/.222/top"
+  "/tmp/.migo_worker/.migo_worker"
+  "/tmp/.migo"
+  "/etc/.httpd/.../httpd"
+  "/etc/.httpd/..../httpd"
+  "/usr/bin/masscan"
+  "pnscan"
+  "xmrig"
+  "minerd"
+  "kworker"
+  "kthreadd"
+  "ksoftirqd"
+  "kswapd0"
+  "sshd"
+  "nc"
+  "masscan"
+)
+
+for process in "${processes_to_kill[@]}"; do
+  pkill -f "$process"
+  echo "$process 进程已终止"
+done
+
+# 额外终止 masscan 自动启动和扫描的相关进程
+if systemctl is-active --quiet masscan.service; then
+  systemctl stop masscan.service
+  systemctl disable masscan.service
+  echo "masscan 服务已停止并禁用"
+fi
+
+# 删除 masscan 可执行文件和相关配置
+if [ -f /usr/bin/masscan ] || [ -f /etc/systemd/system/masscan.service ]; then
+  rm -rf /usr/bin/masscan
+  rm -rf /etc/systemd/system/masscan.service
+  systemctl daemon-reload
+  echo "masscan 可执行文件和服务配置已删除"
+fi
+
+# 检查恶意软件的持久化方式
+# 检查 rc.local 和 cron
+if grep -q "malicious_command" /etc/rc.local; then
+  sed -i '/malicious_command/d' /etc/rc.local
+  echo "已从 /etc/rc.local 中删除恶意命令"
+fi
+
+cron_files=("/var/spool/cron/root" "/etc/cron.d/" "/etc/cron.hourly/" "/etc/cron.daily/")
+for cron_file in "${cron_files[@]}"; do
+  if [ -f "$cron_file" ]; then
+    sed -i '/malicious_command/d' "$cron_file"
+    echo "已从 $cron_file 中删除恶意 cron 任务"
+  fi
+done
+
+# 检查 systemd 服务目录中的恶意条目
+systemd_dirs=("/etc/systemd/system/" "/usr/lib/systemd/system/" "/lib/systemd/system/")
+for dir in "${systemd_dirs[@]}"; do
+  if ls "$dir" | grep -q "suspicious_service"; then
+    systemctl disable suspicious_service
+    rm -rf "$dir/suspicious_service"
+    echo "已禁用并删除 systemd 中的 suspicious_service"
+  fi
+done
+
+# 删除所有相关恶意文件和进程完成
+echo "恶意软件清理脚本执行完毕。"
