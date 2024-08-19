@@ -34,6 +34,7 @@ files_to_remove=(
   "/var/tmp/.222/top"
   "/usr/bin/.ssh/"
   "/usr/local/bin/.cache/"
+  "/usr/local/bin/docker-cache"  # 可能被模仿的 docker-cache
 )
 
 for file in "${files_to_remove[@]}"; do
@@ -58,13 +59,8 @@ processes_to_kill=(
   "pnscan"
   "xmrig"
   "minerd"
-  "kworker"
-  "kthreadd"
-  "ksoftirqd"
-  "kswapd0"
-  "sshd"
-  "nc"
   "masscan"
+  "docker-cache"  # 恶意的 docker-cache 伪装进程
 )
 
 for process in "${processes_to_kill[@]}"; do
