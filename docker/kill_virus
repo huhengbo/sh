@@ -20,6 +20,7 @@ fi
 files_to_remove=(
   "/usr/lib/libsystemd-shared-165.so"
   "/usr/local/lib/libprocesshider.so"
+  "/usr/games/.-/.pp/.pp/crond"
   "/usr/local/lib/top.so"
   "/usr/local/lib/masscan.so"
   "/usr/local/lib/pnscan.so"
@@ -50,6 +51,7 @@ done
 processes_to_kill=(
   "/usr/local/lib/libsystemd.so"
   "/usr/local/lib/libprocesshider.so"
+  "/usr/games/.-/.pp/.pp/crond"
   "/usr/local/bin/pnscan"
   "/var/spool/.system/.system"
   "/var/tmp/.222/top"
