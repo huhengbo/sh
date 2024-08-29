@@ -19,6 +19,7 @@ fi
 # 删除特定恶意文件并解除权限限制
 files_to_remove=(
   "/usr/lib/libsystemd-shared-165.so"
+  "/usr/local/lib/libprocesshider.so"
   "/usr/local/lib/top.so"
   "/usr/local/lib/masscan.so"
   "/usr/local/lib/pnscan.so"
@@ -48,6 +49,7 @@ done
 # 杀掉指定进程并删除相关文件
 processes_to_kill=(
   "/usr/local/lib/libsystemd.so"
+  "/usr/local/lib/libprocesshider.so"
   "/usr/local/bin/pnscan"
   "/var/spool/.system/.system"
   "/var/tmp/.222/top"
