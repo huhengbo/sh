@@ -36,6 +36,7 @@ files_to_remove=(
   "/var/tmp/.222/top"
   "/usr/bin/.ssh/"
   "/usr/local/bin/.cache/"
+  "/etc/cron.d/zzh"
   "/usr/local/bin/docker-cache"  # 可能被模仿的 docker-cache
 )
 
