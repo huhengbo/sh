@@ -64,7 +64,7 @@ MODIFIED_FILES=()
 # 判断docker是否开放2375端口
 check_docker_port() {
     # 获取docker信息并检查警告信息
-    if docker system info 2>/dev/null | grep -q 'API is accessible on http://0.0.0.0:2375'; then
+    if docker system info | grep -q '0.0.0.0:2375'; then
         return 0  # 端口2375已开放
     else
         return 1  # 端口2375未开放
