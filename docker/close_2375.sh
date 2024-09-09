@@ -63,19 +63,10 @@ MODIFIED_FILES=()
 
 # 判断docker是否开放2375端口
 check_docker_port() {
-    # 临时文件
-    local temp_file
-    temp_file=$(mktemp)
-
-    # 获取docker信息并保存到临时文件
-    docker system info > "$temp_file" 2>/dev/null
-
-    # 检查端口2375是否开放
-    if grep -q '0.0.0.0:2375' "$temp_file"; then
-        rm "$temp_file"
+    # 获取docker信息并检查警告信息
+    if docker system info 2>/dev/null | grep -q 'API is accessible on http://0.0.0.0:2375'; then
         return 0  # 端口2375已开放
     else
-        rm "$temp_file"
         return 1  # 端口2375未开放
     fi
 }
