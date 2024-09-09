@@ -65,9 +65,9 @@ MODIFIED_FILES=()
 check_docker_port() {
     # 获取docker信息并检查警告信息
     if docker system info | grep -q '0.0.0.0:2375'; then
-        return 0  # 端口2375已开放
+        return 1  # 端口2375已开放
     else
-        return 1  # 端口2375未开放
+        return 0  # 端口2375未开放
     fi
 }
 
