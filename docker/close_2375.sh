@@ -186,11 +186,11 @@ if check_docker_port; then
     echo "2375 port is open. Proceeding with configuration update."
 
     # 确认更新操作
-    read -p "This will remove port 2375 from Docker configuration. Do you want to proceed? (y/n): " confirmation
-    if [[ "$confirmation" != "y" ]]; then
-        echo "Operation canceled."
-        exit 0
-    fi
+#    read -p "This will remove port 2375 from Docker configuration. Do you want to proceed? (y/n): " confirmation
+#    if [[ "$confirmation" != "y" ]]; then
+#        echo "Operation canceled."
+#        exit 0
+#    fi
 
     backup_all_files
     update_daemon_json
