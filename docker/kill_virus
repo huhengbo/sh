@@ -102,6 +102,13 @@ for cron_file in "${cron_files[@]}"; do
     echo "已从 $cron_file 中删除恶意 cron 任务"
   fi
 done
+cron_files=("/etc/crontab")
+for cron_file in "${cron_files[@]}"; do
+  if [ -f "$cron_file" ]; then
+    sed -i '/echo/d' "$cron_file"
+    echo "已从 $cron_file 中删除恶意 cron 任务"
+  fi
+done
 
 # 检查 systemd 服务目录中的恶意条目
 systemd_dirs=("/etc/systemd/system/" "/usr/lib/systemd/system/" "/lib/systemd/system/")
