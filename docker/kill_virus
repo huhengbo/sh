@@ -65,6 +65,8 @@ processes_to_kill=(
   "xmrig"
   "minerd"
   "masscan"
+  "/home/dockeruser/.configrc5/a/kswapd0"
+  "/tmp/.X291-unix/.rsync/c/blitz64"
   "docker-cache"  # 恶意的 docker-cache 伪装进程
 )
 
@@ -106,6 +108,9 @@ cron_files=("/etc/crontab")
 for cron_file in "${cron_files[@]}"; do
   if [ -f "$cron_file" ]; then
     sed -i '/echo/d' "$cron_file"
+    sed -i '/vurl/d' "$cron_file"
+    sed -i '/cronb.sh/d' "$cron_file"
+    sed -i '/urllib2/d' "$cron_file"
     echo "已从 $cron_file 中删除恶意 cron 任务"
   fi
 done
