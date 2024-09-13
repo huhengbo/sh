@@ -70,6 +70,7 @@ processes_to_kill=(
   "/var/opt/mssql/log/.redtail"
   "/.redtail"
   "/var/tmp/.c/loginclientbot"
+  "/tmp/xmrig/xmrig-6.21.3/xmrig"
   "docker-cache"  # 恶意的 docker-cache 伪装进程
 )
 
