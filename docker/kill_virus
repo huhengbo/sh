@@ -67,6 +67,9 @@ processes_to_kill=(
   "masscan"
   "/home/dockeruser/.configrc5/a/kswapd0"
   "/tmp/.X291-unix/.rsync/c/blitz64"
+  "/var/opt/mssql/log/.redtail"
+  "/.redtail"
+  "/var/tmp/.c/loginclientbot"
   "docker-cache"  # 恶意的 docker-cache 伪装进程
 )
 
