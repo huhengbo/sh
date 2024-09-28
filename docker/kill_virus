@@ -2,7 +2,7 @@
 
 # 添加 registry-1.docker.io 到 /etc/hosts
 if ! grep -q '127.0.0.1 registry-1.docker.io' /etc/hosts; then
-  echo "127.0.0.1 registry-1.docker.io" >> /etc/hosts
+  #echo "127.0.0.1 registry-1.docker.io" >> /etc/hosts
   echo "/etc/hosts 已添加 registry-1.docker.io 条目"
 fi
 
