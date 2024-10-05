@@ -117,6 +117,7 @@ update_docker_service_files() {
     for path in /usr/lib/systemd/system/docker.service /lib/systemd/system/docker.service; do
         if [ -f "$path" ]; then
             ${SUDO_CMD} sed -i 's/ -H tcp:\/\/0.0.0.0:2375//g' "$path"
+            ${SUDO_CMD} sed -i 's/ -H=tcp://0.0.0.0:2375//g' "$path"
             ${SUDO_CMD} sed -i 's/ --host tcp:\/\/0.0.0.0:2375//g' "$path"
             echo "Port 2375 removed from $path."
         fi
