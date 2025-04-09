@@ -16,19 +16,19 @@
 ### ZSH 环境初始化
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/yourusername/sh/main/shell/zsh_init.sh)
+bash <(curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/shell/zsh_init.sh)
 ```
 
 ### Docker 安全加固
 
 ```bash
-sudo bash <(curl -sL https://raw.githubusercontent.com/yourusername/sh/main/docker/close_2375.sh)
+sudo bash <(curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/docker/close_2375.sh)
 ```
 
 ### Docker 病毒清理
 
 ```bash
-sudo bash <(curl -sL https://raw.githubusercontent.com/yourusername/sh/main/docker/kill_virus)
+sudo bash <(curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/docker/kill_virus)
 ```
 
 ## 脚本说明
