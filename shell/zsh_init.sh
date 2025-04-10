@@ -502,9 +502,9 @@ uninstall() {
 check_installed_components() {
     log "检查已安装组件..."
     
-    # 声明数组变量
-    declare -a components
-    declare -a versions
+    # 初始化数组
+    local components=()
+    local versions=()
     
     # 检查 zsh
     if command -v zsh &>/dev/null; then
