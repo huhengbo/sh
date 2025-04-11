@@ -1,133 +1,347 @@
 #!/bin/bash
 
-# 添加 registry-1.docker.io 到 /etc/hosts
-if ! grep -q '127.0.0.1 registry-1.docker.io' /etc/hosts; then
-  #echo "127.0.0.1 registry-1.docker.io" >> /etc/hosts
-  echo "/etc/hosts 已添加 registry-1.docker.io 条目"
-fi
+# 设置日志文件
+LOG_FILE="/var/log/virus_cleanup.log"
+BACKUP_DIR="/var/backup/virus_cleanup/$(date +%Y%m%d_%H%M%S)"
+
+# 日志函数
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+}
+
+# 创建备份目录
+mkdir -p "$BACKUP_DIR"
+
+# 备份文件函数
+backup_file() {
+    local file="$1"
+    if [ -f "$file" ] || [ -d "$file" ]; then
+        cp -r "$file" "$BACKUP_DIR/"
+        log_message "已备份文件: $file 到 $BACKUP_DIR"
+    fi
+}
 
 # 查看 /etc/ld.so.preload 内容
-cat /etc/ld.so.preload
+log_message "检查 /etc/ld.so.preload 内容:"
+cat /etc/ld.so.preload | tee -a "$LOG_FILE"
 
 # 确认 /etc/ld.so.preload 是否存在并处理权限
 if [ -f /etc/ld.so.preload ]; then
-  chattr -i /etc/ld.so.preload
-  echo '' > /etc/ld.so.preload
-  echo "/etc/ld.so.preload 文件已清空"
+    backup_file "/etc/ld.so.preload"
+    chattr -i /etc/ld.so.preload
+    echo '' > /etc/ld.so.preload
+    log_message "/etc/ld.so.preload 文件已清空"
 fi
 
 # 删除特定恶意文件并解除权限限制
 files_to_remove=(
-  "/usr/lib/libsystemd-shared-165.so"
-  "/usr/local/lib/libprocesshider.so"
-  "/usr/games/.-/.pp/.pp/crond"
-  "/usr/local/lib/top.so"
-  "/usr/local/lib/masscan.so"
-  "/usr/local/lib/pnscan.so"
-  "/usr/local/lib/httpd.so"
-  "/usr/local/lib/bioset.so"
-  "/usr/local/lib/libsystemd.so"
-  "/usr/local/bin/pnscan"
-  "/tmp/.migo_worker/.migo_worker"
-  "/tmp/.migo"
-  "/etc/.httpd/.../httpd"
-  "/etc/.httpd/..../httpd"
-  "/var/spool/.system/.system"
-  "/var/tmp/.222/top"
-  "/usr/bin/.ssh/"
-  "/usr/local/bin/.cache/"
-  "/etc/cron.d/zzh"
-  "/usr/local/bin/docker-cache"  # 可能被模仿的 docker-cache
+    # 常见恶意库文件
+    "/usr/lib/libsystemd-shared-165.so"
+    "/usr/local/lib/libprocesshider.so"
+    "/usr/local/lib/top.so"
+    "/usr/local/lib/masscan.so"
+    "/usr/local/lib/pnscan.so"
+    "/usr/local/lib/httpd.so"
+    "/usr/local/lib/bioset.so"
+    "/usr/local/lib/libsystemd.so"
+    "/usr/local/lib/libloading.so"
+    "/usr/local/lib/libcryptocoin.so"
+    "/usr/local/lib/libtcs.so"
+    "/usr/local/lib/libcset.so"
+    "/usr/lib64/libcryptocoin.so"
+    "/usr/lib64/libloading.so"
+    "/usr/lib64/libprocesshider.so"
+    "/usr/lib/x86_64-linux-gnu/libprocesshider.so"
+    "/usr/lib/x86_64-linux-gnu/libsmoker.so"
+    
+    # 隐藏的可执行文件和目录
+    "/usr/games/.-/.pp/.pp/crond"
+    "/usr/local/bin/pnscan"
+    "/tmp/.migo_worker/.migo_worker"
+    "/tmp/.migo"
+    "/etc/.httpd/.../httpd"
+    "/etc/.httpd/..../httpd"
+    "/var/spool/.system/.system"
+    "/var/tmp/.222/top"
+    "/usr/bin/.ssh/"
+    "/usr/local/bin/.cache/"
+    "/etc/cron.d/zzh"
+    "/usr/local/bin/docker-cache"
+    
+    # 挖矿恶意软件
+    "/tmp/.xmrig/"
+    "/tmp/.systemd/"
+    "/tmp/.system/"
+    "/tmp/.tmp/"
+    "/tmp/kdevtmpfsi"
+    "/tmp/kinsing"
+    "/tmp/systemten"
+    "/var/tmp/kinsing"
+    "/var/tmp/systemten"
+    
+    # 隐藏的恶意软件目录
+    "/home/dockeruser/.configrc5/a/"
+    "/tmp/.X291-unix/.rsync/c/"
+    "/var/opt/mssql/log/.redtail"
+    "/.redtail"
+    "/var/tmp/.c/loginclientbot"
+    "/tmp/xmrig/xmrig-6.21.3/xmrig"
+    "/opt/.crypto"
+    "/root/.tmp/"
+    "/.config/.keys/"
+    
+    # 更多流行的挖矿木马
+    "/tmp/kthreaddi"
+    "/tmp/kthreaddk"
+    "/tmp/.X24-unix/.rsync/"
+    
+    # 僵尸网络和后门
+    "/tmp/gates.lod"
+    "/tmp/gates"
+    "/tmp/moni"
+    "/tmp/kr3m"
+    "/tmp/arkei"
+    "/tmp/nopxi"
+    "/var/tmp/gates.lod"
+    "/var/tmp/moni"
+    
+    # SSH 相关恶意软件
+    "/usr/bin/sshins"
+    "/usr/bin/ssh-keycp"
+    "/usr/bin/.ssh-idrsa-4096"
+    "/usr/bin/.ssh-daemon"
+    
+    # 不要直接删除这些文件，先检查它们是否包含恶意内容
+    # "/etc/.bashrc"
+    # "/root/.ssh/.authorized_keys"
+    # "/root/.ssh/.known_hosts"
 )
 
 for file in "${files_to_remove[@]}"; do
-  if [ -f "$file" ] || [ -d "$file" ]; then
-    chattr -i "$file"
-    rm -rf "$file"
-    echo "$file 已删除"
-  fi
+    if [ -f "$file" ] || [ -d "$file" ]; then
+        backup_file "$file"
+        chattr -i "$file"
+        rm -rf "$file"
+        log_message "$file 已删除"
+    fi
 done
 
-# 杀掉指定进程并删除相关文件
+# 改进的进程终止函数
+kill_process() {
+    local process="$1"
+    
+    # 检查是否是路径
+    if [[ "$process" == /* ]]; then
+        # 使用完整路径进行精确匹配
+        local pids=$(ps aux | grep -v grep | grep "$process" | awk '{print $2}')
+        if [ ! -z "$pids" ]; then
+            for pid in $pids; do
+                # 检查进程路径
+                local proc_path=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
+                if [ "$proc_path" = "$process" ]; then
+                    kill -9 "$pid"
+                    log_message "进程 $process (PID: $pid) 已终止"
+                fi
+            done
+        fi
+    else
+        # 对于非路径的进程名，使用更多检查来避免误杀
+        # 1. 检查确切的命令名称匹配
+        # 2. 只终止可疑的进程（如 CPU 使用率高，非系统进程）
+        local pids=$(ps aux | grep -v grep | grep -w "$process" | awk '{if ($3 > 50.0 || $1 != "root" && $1 != "nobody" && $1 != "www-data") print $2}')
+        if [ ! -z "$pids" ]; then
+            for pid in $pids; do
+                # 额外检查进程名
+                local proc_name=$(cat /proc/$pid/comm 2>/dev/null)
+                local cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
+                
+                # 检查是否是已知的合法系统进程
+                if [[ "$proc_name" != "systemd" && "$proc_name" != "init" && 
+                     "$proc_name" != "kthreadd" && "$proc_name" != "sshd" && 
+                     "$proc_name" != "bash" && "$proc_name" != "sh" && 
+                     ! "$cmdline" =~ ^/(usr|bin)/(bash|sh) ]]; then
+                    
+                    # 记录可疑进程详细信息
+                    log_message "发现可疑进程: $proc_name (PID: $pid, cmdline: $cmdline)"
+                    
+                    # 仅当进程名精确匹配时才终止
+                    if [[ "$proc_name" == "$process" ]]; then
+                        kill -9 "$pid"
+                        log_message "已终止可疑进程: $proc_name (PID: $pid)"
+                    fi
+                fi
+            done
+        fi
+    fi
+}
+
+# 杀掉指定进程，使用完整路径可以更精确地匹配
 processes_to_kill=(
-  "/usr/local/lib/libsystemd.so"
-  "/usr/local/lib/libprocesshider.so"
-  "/usr/games/.-/.pp/.pp/crond"
-  "/usr/local/bin/pnscan"
-  "/var/spool/.system/.system"
-  "/var/tmp/.222/top"
-  "/tmp/.migo_worker/.migo_worker"
-  "/tmp/.migo"
-  "/etc/.httpd/.../httpd"
-  "/etc/.httpd/..../httpd"
-  "/usr/bin/masscan"
-  "pnscan"
-  "xmrig"
-  "minerd"
-  "masscan"
-  "/home/dockeruser/.configrc5/a/kswapd0"
-  "/tmp/.X291-unix/.rsync/c/blitz64"
-  "/var/opt/mssql/log/.redtail"
-  "/.redtail"
-  "/var/tmp/.c/loginclientbot"
-  "/tmp/xmrig/xmrig-6.21.3/xmrig"
-  "docker-cache"  # 恶意的 docker-cache 伪装进程
+    "/usr/local/lib/libsystemd.so"
+    "/usr/local/lib/libprocesshider.so"
+    "/usr/games/.-/.pp/.pp/crond"
+    "/usr/local/bin/pnscan"
+    "/var/spool/.system/.system"
+    "/var/tmp/.222/top"
+    "/tmp/.migo_worker/.migo_worker"
+    "/tmp/.migo"
+    "/etc/.httpd/.../httpd"
+    "/etc/.httpd/..../httpd"
+    "/usr/bin/masscan"
+    "/home/dockeruser/.configrc5/a/kswapd0"
+    "/tmp/.X291-unix/.rsync/c/blitz64"
+    "/var/opt/mssql/log/.redtail"
+    "/var/tmp/.c/loginclientbot"
+    "/tmp/xmrig/xmrig-6.21.3/xmrig"
 )
 
+# 这些是可执行文件名称，需要更小心地处理
+suspicious_process_names=(
+    "pnscan"
+    "xmrig"
+    "minerd"
+    "masscan"
+    "kdevtmpfsi"
+    "kinsing"
+    "systemten"
+    "cryptonight"
+    "wnTKYg"
+    "gate.sh"
+    "mule"
+    "sreJ"
+    "kerberods"
+)
+
+# 先终止完整路径的进程
 for process in "${processes_to_kill[@]}"; do
-  pkill -f "$process"
-  echo "$process 进程已终止"
+    kill_process "$process"
 done
 
-# 额外终止 masscan 自动启动和扫描的相关进程
-if systemctl is-active --quiet masscan.service; then
-  systemctl stop masscan.service
-  systemctl disable masscan.service
-  echo "masscan 服务已停止并禁用"
+# 再检查可疑进程名
+for process in "${suspicious_process_names[@]}"; do
+    kill_process "$process"
+done
+
+# 检查所有用户的 crontab
+check_all_crontabs() {
+    log_message "检查所有用户的 crontab..."
+    for user in $(cut -f1 -d: /etc/passwd); do
+        if [ -f "/var/spool/cron/crontabs/$user" ]; then
+            log_message "检查用户 $user 的 crontab"
+            grep -v '^#' "/var/spool/cron/crontabs/$user" | while read line; do
+                # 更精确地匹配可疑模式
+                if [[ "$line" =~ (curl.*\|.*sh|wget.*\|.*sh|bash.*-c|python.*http|perl.*http) ]]; then
+                    log_message "发现可疑的 crontab 条目: $line"
+                    # 不自动删除，仅记录
+                fi
+            done
+        fi
+    done
+}
+
+# 检查系统服务
+check_systemd_services() {
+    log_message "检查系统服务..."
+    for service in $(systemctl list-units --type=service --state=running | grep -v "systemd\|dbus\|rsyslog" | awk '{print $1}'); do
+        service_path=$(systemctl show -p FragmentPath "$service" | cut -d'=' -f2)
+        if [ -f "$service_path" ]; then
+            # 检查服务文件权限
+            perms=$(stat -c "%a %U %G" "$service_path")
+            if [[ "$perms" =~ ^[0-7][0-7][0-7]\ root\ root$ ]]; then
+                log_message "服务 $service 权限正常: $perms"
+            else
+                log_message "警告: 服务 $service 权限异常: $perms"
+            fi
+        fi
+    done
+}
+
+# 检查 SSH 授权文件
+check_ssh_files() {
+    log_message "检查 SSH 授权文件..."
+    for user_home in /home/*/ /root/; do
+        if [ -d "${user_home}.ssh" ]; then
+            if [ -f "${user_home}.ssh/authorized_keys" ]; then
+                log_message "检查 ${user_home}.ssh/authorized_keys"
+                # 查找可疑的 SSH 密钥
+                grep -v "^#" "${user_home}.ssh/authorized_keys" | while read line; do
+                    # 只标记包含可疑命令的条目
+                    if [[ "$line" =~ (command=\"curl|command=\"wget|command=\"bash.*-c) ]]; then
+                        log_message "发现可疑的 SSH 密钥授权: $line"
+                    fi
+                done
+            fi
+        fi
+    done
+}
+
+# 检查可疑文件而不是直接删除
+check_suspicious_files() {
+    log_message "检查可疑的配置文件..."
+    
+    # 检查可疑的 SSH 文件
+    if [ -f "/root/.ssh/.authorized_keys" ]; then
+        log_message "发现可疑的 SSH 授权文件: /root/.ssh/.authorized_keys（注意额外的点）"
+        # 检查文件内容是否包含恶意命令
+        if grep -q "command=\".*wget\|curl\|bash" "/root/.ssh/.authorized_keys"; then
+            log_message "确认 /root/.ssh/.authorized_keys 包含可疑内容，已备份并删除"
+            backup_file "/root/.ssh/.authorized_keys"
+            rm -f "/root/.ssh/.authorized_keys"
+        else
+            log_message "警告: 发现 /root/.ssh/.authorized_keys 但内容似乎正常，仅备份不删除"
+            backup_file "/root/.ssh/.authorized_keys"
+        fi
+    fi
+    
+    if [ -f "/root/.ssh/.known_hosts" ]; then
+        log_message "发现可疑的 SSH known_hosts 文件: /root/.ssh/.known_hosts（注意额外的点）"
+        backup_file "/root/.ssh/.known_hosts"
+        # 记录但不删除，因为通常不会有恶意的 known_hosts
+    fi
+    
+    if [ -f "/etc/.bashrc" ]; then
+        log_message "发现可疑的 bashrc 文件: /etc/.bashrc（注意点前缀）"
+        # 检查文件内容是否包含恶意命令
+        if grep -q "wget\|curl\|nc -e\|bash -i" "/etc/.bashrc"; then
+            log_message "确认 /etc/.bashrc 包含可疑内容，已备份并删除"
+            backup_file "/etc/.bashrc"
+            rm -f "/etc/.bashrc"
+        else
+            log_message "警告: 发现 /etc/.bashrc 但内容似乎正常，仅备份不删除"
+            backup_file "/etc/.bashrc"
+        fi
+    fi
+    
+    # 检查标准位置的配置文件是否被篡改
+    for file in "/etc/bashrc" "/etc/profile" "/etc/profile.d/"*; do
+        if [ -f "$file" ]; then
+            if grep -q "wget\|curl\|nc -e\|bash -i\|/dev/tcp/" "$file"; then
+                log_message "警告: 标准配置文件 $file 包含可疑内容"
+                backup_file "$file"
+                # 不自动删除或修改系统文件，仅记录
+            fi
+        fi
+    done
+}
+
+# 执行额外的检查
+check_all_crontabs
+check_systemd_services
+
+# 检查 at 任务
+if [ -d /var/spool/at ]; then
+    log_message "检查 at 任务..."
+    for job in /var/spool/at/*; do
+        if [ -f "$job" ]; then
+            log_message "发现 at 任务: $job"
+        fi
+    done
 fi
 
-# 删除 masscan 可执行文件和相关配置
-if [ -f /usr/bin/masscan ] || [ -f /etc/systemd/system/masscan.service ]; then
-  rm -rf /usr/bin/masscan
-  rm -rf /etc/systemd/system/masscan.service
-  systemctl daemon-reload
-  echo "masscan 可执行文件和服务配置已删除"
-fi
+# 检查 SSH 文件
+check_ssh_files
 
-# 检查恶意软件的持久化方式
-# 检查 rc.local 和 cron
-if grep -q "malicious_command" /etc/rc.local; then
-  sed -i '/malicious_command/d' /etc/rc.local
-  echo "已从 /etc/rc.local 中删除恶意命令"
-fi
+# 执行可疑文件检查
+check_suspicious_files
 
-cron_files=("/var/spool/cron/root" "/etc/cron.d/" "/etc/cron.hourly/" "/etc/cron.daily/")
-for cron_file in "${cron_files[@]}"; do
-  if [ -f "$cron_file" ]; then
-    sed -i '/malicious_command/d' "$cron_file"
-    echo "已从 $cron_file 中删除恶意 cron 任务"
-  fi
-done
-cron_files=("/etc/crontab")
-for cron_file in "${cron_files[@]}"; do
-  if [ -f "$cron_file" ]; then
-    sed -i '/echo/d' "$cron_file"
-    sed -i '/vurl/d' "$cron_file"
-    sed -i '/cronb.sh/d' "$cron_file"
-    sed -i '/urllib2/d' "$cron_file"
-    echo "已从 $cron_file 中删除恶意 cron 任务"
-  fi
-done
-
-# 检查 systemd 服务目录中的恶意条目
-systemd_dirs=("/etc/systemd/system/" "/usr/lib/systemd/system/" "/lib/systemd/system/")
-for dir in "${systemd_dirs[@]}"; do
-  if ls "$dir" | grep -q "suspicious_service"; then
-    systemctl disable suspicious_service
-    rm -rf "$dir/suspicious_service"
-    echo "已禁用并删除 systemd 中的 suspicious_service"
-  fi
-done
-
-# 删除所有相关恶意文件和进程完成
-echo "恶意软件清理脚本执行完毕。"
+log_message "恶意软件清理脚本执行完毕。"
