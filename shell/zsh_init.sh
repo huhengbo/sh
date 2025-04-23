@@ -256,6 +256,8 @@ install_ohmyzsh() {
     log "安装 Oh My Zsh..."
     
     if [ ! -d "$HOME/.oh-my-zsh" ]; then
+        # 设置环境变量以自动确认
+        export CHSH=yes
         RUNZSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
     else
         # 使用 bash 更新 Oh My Zsh，而不是 sh
