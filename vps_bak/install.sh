@@ -115,30 +115,46 @@ update_scripts() {
         echo "已备份rclone配置到 $RCLONE_CONFIG.bak"
     fi
     
-    # 下载最新脚本
+    # 创建临时目录
+    TMP_DIR=$(mktemp -d)
+    echo "使用临时目录: $TMP_DIR"
+    
+    # 下载最新脚本到临时目录
     if command -v wget &> /dev/null; then
-        wget -O "$INSTALL_DIR/install.sh.new" "$GITHUB_REPO/install.sh" && \
-        wget -O "$INSTALL_DIR/backup.sh.new" "$GITHUB_REPO/backup.sh"
+        wget -O "$TMP_DIR/install.sh" "$GITHUB_REPO/install.sh" && \
+        wget -O "$TMP_DIR/backup.sh" "$GITHUB_REPO/backup.sh"
         download_status=$?
     elif command -v curl &> /dev/null; then
-        curl -o "$INSTALL_DIR/install.sh.new" "$GITHUB_REPO/install.sh" && \
-        curl -o "$INSTALL_DIR/backup.sh.new" "$GITHUB_REPO/backup.sh"
+        curl -o "$TMP_DIR/install.sh" "$GITHUB_REPO/install.sh" && \
+        curl -o "$TMP_DIR/backup.sh" "$GITHUB_REPO/backup.sh"
         download_status=$?
     else
         echo -e "${RED}未找到wget或curl，无法更新。${NC}"
+        rm -rf "$TMP_DIR"
         return 1
     fi
     
     # 检查下载是否成功
     if [ $download_status -ne 0 ]; then
         echo -e "${RED}下载更新失败。${NC}"
+        rm -rf "$TMP_DIR"
+        return 1
+    fi
+    
+    # 检查文件是否实际存在
+    if [ ! -f "$TMP_DIR/install.sh" ] || [ ! -f "$TMP_DIR/backup.sh" ]; then
+        echo -e "${RED}下载的文件不存在，更新失败。${NC}"
+        rm -rf "$TMP_DIR"
         return 1
     fi
     
     # 替换旧脚本
-    chmod +x "$INSTALL_DIR/install.sh.new" "$INSTALL_DIR/backup.sh.new"
-    mv "$INSTALL_DIR/install.sh.new" "$INSTALL_DIR/install.sh"
-    mv "$INSTALL_DIR/backup.sh.new" "$INSTALL_DIR/backup.sh"
+    chmod +x "$TMP_DIR/install.sh" "$TMP_DIR/backup.sh"
+    cp "$TMP_DIR/install.sh" "$INSTALL_DIR/install.sh"
+    cp "$TMP_DIR/backup.sh" "$INSTALL_DIR/backup.sh"
+    
+    # 清理临时目录
+    rm -rf "$TMP_DIR"
     
     echo -e "${GREEN}更新成功!${NC}"
     echo -e "${YELLOW}请重新启动脚本以应用更新。${NC}"
