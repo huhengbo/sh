@@ -10,6 +10,9 @@
 - `docker/`: Docker 相关工具目录
   - `close_2375.sh`: Docker 安全加固脚本
   - `kill_virus`: Docker 病毒清理脚本
+- `vps_bak/`: S3 备份系统目录
+  - `install.sh`: S3 备份系统安装脚本
+  - `backup.sh`: 备份执行脚本
 
 ## 一键执行命令
 
@@ -29,6 +32,12 @@ sudo bash <(curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/docker/c
 
 ```bash
 sudo bash <(curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/docker/kill_virus)
+```
+
+### S3 备份系统安装
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/vps_bak/install.sh)
 ```
 
 ## 脚本说明
@@ -71,6 +80,29 @@ Powerlevel10k ZSH 主题的配置文件，提供美观且功能丰富的终端�
 - 解除文件权限限制
 - 重置系统配置
 - 增强系统安全性
+
+### S3 备份系统
+
+#### install.sh
+
+S3 备份系统的安装和配置脚本，用于自动化备份数据到 S3 兼容的云存储服务。
+
+**功能特点：**
+- 自动安装依赖（rclone、jq 等）
+- 配置 S3 存储连接（支持AWS、阿里云、腾讯云、Cloudflare R2 等）
+- 设置备份任务计划
+- 灵活的备份策略（频率、保留天数、压缩方式等）
+- 一键执行备份
+
+#### backup.sh
+
+备份执行脚本，负责实际的备份操作。
+
+**功能特点：**
+- 备份指定文件夹到 S3 存储
+- 自动压缩备份文件
+- 自动清理过期备份
+- 日志记录
 
 ## 注意事项
 

@@ -1,0 +1,58 @@
+{
+  "examples": {
+    "aws_s3": {
+      "remote": "aws-s3",
+      "bucket": "my-backup-bucket",
+      "backup_dirs": [
+        "/home/user/documents",
+        "/var/www/html",
+        "/etc/nginx"
+      ],
+      "frequency": "daily",
+      "backup_time": "03:00",
+      "retention_days": 30,
+      "compression": "tar.gz",
+      "last_backup": "2023-01-01 12:00:00"
+    },
+    "aliyun_oss": {
+      "remote": "aliyun-oss",
+      "bucket": "my-aliyun-bucket",
+      "backup_dirs": [
+        "/home/user/projects",
+        "/var/www/website"
+      ],
+      "frequency": "daily",
+      "backup_time": "02:30",
+      "retention_days": 14,
+      "compression": "tar.gz",
+      "last_backup": "2023-01-02 02:30:00"
+    },
+    "tencent_cos": {
+      "remote": "tencent-cos",
+      "bucket": "my-tencent-bucket",
+      "backup_dirs": [
+        "/home/user/data",
+        "/var/log/important"
+      ],
+      "frequency": "weekly",
+      "backup_time": "01:00",
+      "retention_days": 90,
+      "compression": "zip",
+      "last_backup": "2023-01-03 01:00:00"
+    }
+  },
+  "current": {
+    "remote": "my-s3",
+    "bucket": "my-backup-bucket",
+    "backup_dirs": [
+      "/home/user/documents",
+      "/var/www/html",
+      "/etc/nginx"
+    ],
+    "frequency": "daily",
+    "backup_time": "03:00",
+    "retention_days": 30,
+    "compression": "tar.gz",
+    "last_backup": "2023-01-01 12:00:00"
+  }
+} 
