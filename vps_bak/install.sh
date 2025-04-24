@@ -7,7 +7,11 @@
 # 使用局部变量，避免与环境变量冲突
 _VERSION="1.0.1"
 GITHUB_REPO="https://raw.githubusercontent.com/huhengbo/sh/main/vps_bak"
-INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 获取当前脚本所在目录
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 所有配置和下载的文件都放在vps_bak子目录中
+VPS_BAK_DIR="$BASE_DIR/vps_bak"
+INSTALL_DIR="$VPS_BAK_DIR"
 CONFIG_DIR="$INSTALL_DIR"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 RCLONE_CONFIG="$CONFIG_DIR/rclone.conf"
@@ -24,6 +28,11 @@ NC='\033[0m' # 无颜色
 
 # 检查目录结构
 check_directories() {
+    # 确保vps_bak目录存在
+    if [ ! -d "$VPS_BAK_DIR" ]; then
+        mkdir -p "$VPS_BAK_DIR"
+    fi
+    
     # 确保配置目录存在
     if [ ! -d "$CONFIG_DIR" ]; then
         mkdir -p "$CONFIG_DIR"
@@ -180,8 +189,9 @@ update_scripts() {
     
     # 替换旧脚本
     chmod +x "$TMP_DIR/install.sh" "$TMP_DIR/backup.sh"
-    cp "$TMP_DIR/install.sh" "$INSTALL_DIR/install.sh"
-    cp "$TMP_DIR/backup.sh" "$INSTALL_DIR/backup.sh"
+    # 将install.sh放在BASE_DIR中，将backup.sh放在VPS_BAK_DIR中
+    cp "$TMP_DIR/install.sh" "$BASE_DIR/install.sh"
+    cp "$TMP_DIR/backup.sh" "$BACKUP_SCRIPT"
     
     # 清理临时目录
     rm -rf "$TMP_DIR"
@@ -685,6 +695,15 @@ update_config() {
     fi
 }
 
+# 检测是否为Alpine Linux系统
+is_alpine() {
+    if [ -f /etc/alpine-release ] || grep -q "Alpine" /etc/os-release 2>/dev/null; then
+        return 0  # 是Alpine
+    else
+        return 1  # 不是Alpine
+    fi
+}
+
 # 安装cron作业
 install_cron_job() {
     # 解析配置的备份时间
@@ -692,16 +711,94 @@ install_cron_job() {
         backup_time=$(jq -r '.backup_time // "03:00"' "$CONFIG_FILE")
         hour=${backup_time%%:*}
         minute=${backup_time##*:}
+        frequency=$(jq -r '.frequency // "daily"' "$CONFIG_FILE")
         
-        # 移除现有的cron作业
-        crontab -l | grep -v "$CRON_JOB_MARKER" > temp_cron
-        
-        # 添加新的cron作业
-        echo "$minute $hour * * * bash $(realpath "$BACKUP_SCRIPT") $CRON_JOB_MARKER" >> temp_cron
-        crontab temp_cron
-        rm temp_cron
-        
-        echo -e "${GREEN}备份计划已设置为每天 $backup_time 执行${NC}"
+        # 检查是否为Alpine Linux
+        if is_alpine; then
+            echo "检测到Alpine Linux系统，使用/etc/periodic方式设置定时任务..."
+            
+            # 根据频率选择合适的目录
+            PERIODIC_DIR=""
+            case "$frequency" in
+                daily)
+                    PERIODIC_DIR="/etc/periodic/daily"
+                    ;;
+                weekly)
+                    PERIODIC_DIR="/etc/periodic/weekly"
+                    ;;
+                monthly)
+                    PERIODIC_DIR="/etc/periodic/monthly"
+                    ;;
+                *)
+                    echo -e "${YELLOW}警告: 不支持的频率 '$frequency'，使用daily作为默认值${NC}"
+                    PERIODIC_DIR="/etc/periodic/daily"
+                    ;;
+            esac
+            
+            # 确保目标目录存在
+            mkdir -p "$PERIODIC_DIR"
+            
+            # 创建备份脚本链接到periodic目录
+            SCRIPT_NAME="S3_backup_${backup_name:-default}"
+            CRON_SCRIPT="$PERIODIC_DIR/$SCRIPT_NAME"
+            
+            # 创建一个包装脚本，以便在指定时间运行
+            cat > "$CRON_SCRIPT" << EOF
+#!/bin/sh
+# $CRON_JOB_MARKER
+# 检查当前小时和分钟是否匹配配置的备份时间
+HOUR=\$(date +%H)
+MINUTE=\$(date +%M)
+
+if [ "\$HOUR" = "$hour" ] && [ "\$MINUTE" -ge "$minute" ] && [ "\$MINUTE" -lt "$((minute + 5))" ]; then
+    bash $(realpath "$BACKUP_SCRIPT") $CRON_JOB_MARKER
+fi
+EOF
+            chmod +x "$CRON_SCRIPT"
+            
+            # 确保crond服务已启用并运行
+            if ! rc-service crond status >/dev/null 2>&1; then
+                echo "启动crond服务..."
+                rc-service crond start >/dev/null 2>&1
+            fi
+            
+            # 将crond添加到默认运行级别
+            if ! rc-update show | grep -q "crond.*default" >/dev/null 2>&1; then
+                echo "将crond添加到默认运行级别..."
+                rc-update add crond default >/dev/null 2>&1
+            fi
+            
+            echo -e "${GREEN}备份计划已设置为$frequency ${backup_time} 执行（Alpine模式）${NC}"
+        else
+            # 非Alpine系统，使用传统的crontab方式
+            # 移除现有的cron作业
+            crontab -l 2>/dev/null | grep -v "$CRON_JOB_MARKER" > temp_cron
+            
+            # 构建cron表达式
+            CRON_EXPR=""
+            case "$frequency" in
+                daily)
+                    CRON_EXPR="$minute $hour * * *"
+                    ;;
+                weekly)
+                    CRON_EXPR="$minute $hour * * 0"  # 每周日
+                    ;;
+                monthly)
+                    CRON_EXPR="$minute $hour 1 * *"  # 每月1日
+                    ;;
+                *)
+                    echo -e "${YELLOW}警告: 不支持的频率 '$frequency'，使用daily作为默认值${NC}"
+                    CRON_EXPR="$minute $hour * * *"
+                    ;;
+            esac
+            
+            # 添加新的cron作业
+            echo "$CRON_EXPR bash $(realpath "$BACKUP_SCRIPT") $CRON_JOB_MARKER" >> temp_cron
+            crontab temp_cron
+            rm temp_cron
+            
+            echo -e "${GREEN}备份计划已设置为$frequency ${backup_time} 执行${NC}"
+        fi
     else
         echo -e "${RED}配置文件不存在，无法安装cron作业${NC}"
         return 1
@@ -710,13 +807,28 @@ install_cron_job() {
 
 # 卸载cron作业
 uninstall_cron_job() {
-    if crontab -l | grep -q "$CRON_JOB_MARKER"; then
-        crontab -l | grep -v "$CRON_JOB_MARKER" > temp_cron
-        crontab temp_cron
-        rm temp_cron
-        echo -e "${GREEN}备份计划已卸载${NC}"
+    # 检查是否为Alpine Linux
+    if is_alpine; then
+        echo "检测到Alpine Linux系统，移除/etc/periodic中的定时任务..."
+        
+        # 移除在periodic目录中的所有相关脚本
+        for dir in /etc/periodic/*; do
+            if [ -d "$dir" ]; then
+                find "$dir" -type f -exec grep -l "$CRON_JOB_MARKER" {} \; | xargs -r rm -f
+            fi
+        done
+        
+        echo -e "${GREEN}备份计划已卸载（Alpine模式）${NC}"
     else
-        echo -e "${YELLOW}未找到备份计划${NC}"
+        # 非Alpine系统，使用传统的crontab方式
+        if crontab -l 2>/dev/null | grep -q "$CRON_JOB_MARKER"; then
+            crontab -l | grep -v "$CRON_JOB_MARKER" > temp_cron
+            crontab temp_cron
+            rm temp_cron
+            echo -e "${GREEN}备份计划已卸载${NC}"
+        else
+            echo -e "${YELLOW}未找到备份计划${NC}"
+        fi
     fi
 }
 
@@ -757,10 +869,62 @@ show_settings() {
         fi
         
         # 检查cron作业是否已安装
-        if crontab -l 2>/dev/null | grep -q "$CRON_JOB_MARKER"; then
-            echo -e "备份状态: ${GREEN}已启用${NC}"
+        if is_alpine; then
+            # Alpine系统检查/etc/periodic目录
+            CRON_INSTALLED=0
+            CRON_SCRIPT_PATH=""
+            
+            # 检查所有periodic目录
+            for period in daily weekly monthly; do
+                SCRIPT_NAME="S3_backup_${backup_name:-default}"
+                CHECK_PATH="/etc/periodic/$period/$SCRIPT_NAME"
+                
+                if [ -f "$CHECK_PATH" ] && grep -q "$CRON_JOB_MARKER" "$CHECK_PATH"; then
+                    CRON_INSTALLED=1
+                    CRON_SCRIPT_PATH="$CHECK_PATH"
+                    ACTUAL_FREQUENCY="$period"
+                    break
+                fi
+            done
+            
+            if [ $CRON_INSTALLED -eq 1 ]; then
+                echo -e "备份状态: ${GREEN}已启用 (Alpine模式)${NC}"
+                echo -e "任务脚本: ${GREEN}$CRON_SCRIPT_PATH${NC}"
+                
+                # 如果实际频率与配置不一致，提供警告
+                if [ "$ACTUAL_FREQUENCY" != "$frequency" ]; then
+                    echo -e "${YELLOW}警告: 当前任务设置为$ACTUAL_FREQUENCY执行，但配置文件中指定为$frequency${NC}"
+                    echo -e "${YELLOW}       运行 '选项4' 重新配置以应用新设置${NC}"
+                fi
+                
+                # 检查crond服务状态
+                if rc-service crond status >/dev/null 2>&1; then
+                    echo -e "crond服务: ${GREEN}正在运行${NC}"
+                else
+                    echo -e "crond服务: ${RED}未运行${NC}"
+                    echo -e "${YELLOW}提示: 运行 'rc-service crond start' 启动服务${NC}"
+                fi
+                
+                # 检查crond是否已添加到启动项
+                if rc-update show | grep -q "crond.*default" >/dev/null 2>&1; then
+                    echo -e "crond启动: ${GREEN}已添加到默认运行级别${NC}"
+                else
+                    echo -e "crond启动: ${RED}未添加到默认运行级别${NC}"
+                    echo -e "${YELLOW}提示: 运行 'rc-update add crond default' 添加到启动项${NC}"
+                fi
+            else
+                echo -e "备份状态: ${YELLOW}未启用${NC}"
+            fi
         else
-            echo -e "备份状态: ${YELLOW}未启用${NC}"
+            # 非Alpine系统使用crontab检查
+            if crontab -l 2>/dev/null | grep -q "$CRON_JOB_MARKER"; then
+                echo -e "备份状态: ${GREEN}已启用${NC}"
+                # 提取cron表达式，检查是否与当前配置一致
+                CRON_LINE=$(crontab -l 2>/dev/null | grep "$CRON_JOB_MARKER")
+                echo -e "Cron设置: ${GREEN}$CRON_LINE${NC}"
+            else
+                echo -e "备份状态: ${YELLOW}未启用${NC}"
+            fi
         fi
     else
         echo -e "${RED}配置文件不存在${NC}"
@@ -849,6 +1013,13 @@ uninstall_backup() {
     if [[ $delete_config == "y" || $delete_config == "Y" ]]; then
         rm -f "$CONFIG_FILE" "$RCLONE_CONFIG"
         echo -e "${GREEN}配置文件已删除${NC}"
+        
+        # 询问是否删除整个vps_bak目录
+        read -p "是否删除整个vps_bak目录? (y/n): " delete_dir
+        if [[ $delete_dir == "y" || $delete_dir == "Y" ]]; then
+            rm -rf "$VPS_BAK_DIR"
+            echo -e "${GREEN}vps_bak目录已删除${NC}"
+        fi
     fi
 }
 

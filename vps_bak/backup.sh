@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
 RCLONE_CONFIG="$SCRIPT_DIR/rclone.conf"
 LOG_DIR="$SCRIPT_DIR/logs"
-LOG_FILE="$LOG_DIR/backup_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="$LOG_DIR/backup_$(date +%Y).log"
 
 # 颜色设置
 RED='\033[0;31m'
@@ -162,10 +162,16 @@ echo -e "${GREEN}备份归档创建成功: $(basename "$archive_file") (大小: 
 
 # 上传到S3
 echo -e "${BLUE}上传备份到S3存储...${NC}"
-upload_path="${backup_name}/$(date +%Y)/$(basename "$archive_file")"
+upload_dir="${backup_name}/$(date +%Y)"
+filename="$(basename "$archive_file")"
+upload_path="${upload_dir}/${filename}"
 
-echo "上传路径: $remote:$bucket/$upload_path"
-rclone --config="$RCLONE_CONFIG" copy "$archive_file" "$remote:$bucket/$upload_path"
+echo "上传路径: $remote:$bucket/${upload_dir}"
+echo "文件名: ${filename}"
+echo "完整目标路径: $remote:$bucket/${upload_path}"
+
+# 使用copyto命令而不是copy，确保不会创建额外的目录
+rclone --config="$RCLONE_CONFIG" copyto "$archive_file" "$remote:$bucket/$upload_path"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}备份上传成功!${NC}"
