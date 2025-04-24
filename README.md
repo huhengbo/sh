@@ -37,7 +37,7 @@ sudo bash <(curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/docker/k
 ### S3 备份系统安装
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/vps_bak/install.sh)
+curl -sL https://raw.githubusercontent.com/huhengbo/sh/main/vps_bak/install.sh -o vps_bak.sh && bash vps_bak.sh
 ```
 
 ## 脚本说明
