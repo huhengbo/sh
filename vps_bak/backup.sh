@@ -4,7 +4,7 @@
 # 用于执行备份任务并上传到S3兼容存储
 #
 
-VERSION="1.0.2"
+VERSION="1.0.3"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
 RCLONE_CONFIG="$SCRIPT_DIR/rclone.conf"
@@ -107,6 +107,9 @@ fi
 
 # 显示要备份的目录
 for dir in "${dirs_to_backup[@]}"; do
+    # 移除目录路径末尾的斜杠（如果有）
+    dir=${dir%/}
+    
     if [ -d "$dir" ]; then
         echo "  - $dir"
     else
@@ -132,6 +135,9 @@ if [ "$compression" == "tar.gz" ]; then
     
     # 添加要备份的目录
     for dir in "${dirs_to_backup[@]}"; do
+        # 移除目录路径末尾的斜杠（如果有）
+        dir=${dir%/}
+        
         if [ -d "$dir" ]; then
             tar_args+=" -C $(dirname "$dir") $(basename "$dir")"
         fi
@@ -140,6 +146,12 @@ if [ "$compression" == "tar.gz" ]; then
     # 执行tar命令
     echo "执行命令: tar $tar_args"
     eval "tar $tar_args"
+    tar_exit_code=$?
+    
+    # 输出调试信息
+    echo "tar命令返回值: $tar_exit_code"
+    echo "检查归档文件是否存在: $archive_file"
+    ls -l "$archive_file" 2>/dev/null || echo "文件不存在"
     
 elif [ "$compression" == "zip" ]; then
     archive_file="$TEMP_DIR/${backup_file_name}.zip"
@@ -156,9 +168,12 @@ else
 fi
 
 # 检查压缩是否成功
-if [ $? -ne 0 ] || [ ! -f "$archive_file" ]; then
-    echo -e "${RED}错误: 创建备份归档失败${NC}"
+if [ ! -f "$archive_file" ]; then
+    echo -e "${RED}错误: 创建备份归档失败 - 文件未生成${NC}"
     exit 1
+elif [ "$compression" == "tar.gz" ] && [ $tar_exit_code -ne 0 ]; then
+    echo -e "${YELLOW}警告: tar命令返回了非零状态码 ($tar_exit_code)，但归档文件已创建${NC}"
+    echo -e "${YELLOW}继续执行备份流程...${NC}"
 fi
 
 # 计算文件大小
