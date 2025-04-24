@@ -4,7 +4,8 @@
 # 用于安装、卸载、配置和管理S3备份任务
 #
 
-VERSION="1.0.1"
+# 使用局部变量，避免与环境变量冲突
+_VERSION="1.0.1"
 GITHUB_REPO="https://raw.githubusercontent.com/huhengbo/sh/main/vps_bak"
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_DIR="$INSTALL_DIR"
@@ -69,12 +70,15 @@ detect_os() {
 # 检查版本更新
 check_version() {
     echo -e "${BLUE}检查更新...${NC}"
+
+    # 获取一个唯一标识符，来避免缓存问题
+    TIMESTAMP=$(date +%s)
     
     # 检查是否安装wget或curl
     if command -v wget &> /dev/null; then
-        latest_version=$(wget -qO- "$GITHUB_REPO/version.txt" 2>/dev/null)
+        latest_version=$(wget -qO- "$GITHUB_REPO/version.txt?t=$TIMESTAMP" 2>/dev/null)
     elif command -v curl &> /dev/null; then
-        latest_version=$(curl -s "$GITHUB_REPO/version.txt" 2>/dev/null)
+        latest_version=$(curl -s "$GITHUB_REPO/version.txt?t=$TIMESTAMP" 2>/dev/null)
     else
         echo -e "${YELLOW}未找到wget或curl，无法检查更新。${NC}"
         return 1
@@ -86,9 +90,18 @@ check_version() {
         return 1
     fi
     
+    # 去除可能的空格和换行符
+    latest_version=$(echo "$latest_version" | tr -d '[:space:]')
+
+    # 检查获取到的版本号是否有效
+    if [ -z "$latest_version" ] || [[ ! "$latest_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${YELLOW}获取到的版本号 '$latest_version' 格式无效，跳过更新检查。${NC}"
+        return 1
+    fi
+    
     # 比较版本
-    if [ "$VERSION" != "$latest_version" ]; then
-        echo -e "${YELLOW}发现新版本: $latest_version (当前版本: $VERSION)${NC}"
+    if [ "$_VERSION" != "$latest_version" ]; then
+        echo -e "${YELLOW}发现新版本: $latest_version (当前版本: $_VERSION)${NC}"
         read -p "是否更新到最新版本? (y/n): " update_now
         if [[ $update_now == "y" || $update_now == "Y" ]]; then
             update_scripts
@@ -96,7 +109,7 @@ check_version() {
             echo -e "${YELLOW}您可以稍后通过选择'6'来更新${NC}"
         fi
     else
-        echo -e "${GREEN}已是最新版本: $VERSION${NC}"
+        echo -e "${GREEN}已是最新版本: $_VERSION${NC}"
     fi
 }
 
@@ -144,6 +157,23 @@ update_scripts() {
     # 检查文件是否实际存在
     if [ ! -f "$TMP_DIR/install.sh" ] || [ ! -f "$TMP_DIR/backup.sh" ]; then
         echo -e "${RED}下载的文件不存在，更新失败。${NC}"
+        rm -rf "$TMP_DIR"
+        return 1
+    fi
+    
+    # 检查下载的install.sh文件中的版本号
+    downloaded_version=$(grep -E "^_VERSION=\"[0-9]+\.[0-9]+\.[0-9]+\"" "$TMP_DIR/install.sh" | cut -d'"' -f2)
+    if [ -z "$downloaded_version" ]; then
+        echo -e "${RED}无法从下载的文件中获取版本号，更新失败。${NC}"
+        rm -rf "$TMP_DIR"
+        return 1
+    fi
+    
+    echo -e "下载的文件版本: ${GREEN}$downloaded_version${NC}"
+    
+    # 确保下载的版本是最新的
+    if [ "$downloaded_version" != "$latest_version" ]; then
+        echo -e "${RED}下载的版本号($downloaded_version)与期望的版本号($latest_version)不匹配，更新失败。${NC}"
         rm -rf "$TMP_DIR"
         return 1
     fi
@@ -351,7 +381,7 @@ show_last_backup() {
 
 # 显示版本和功能信息
 show_info() {
-    echo -e "${BLUE}S3备份系统${NC} - ${GREEN}v$VERSION${NC}"
+    echo -e "${BLUE}S3备份系统${NC} - ${GREEN}$_VERSION${NC}"
     echo "========================================"
     echo -e "功能:"
     echo -e "  ${GREEN}1${NC} - 安装/配置备份任务"
