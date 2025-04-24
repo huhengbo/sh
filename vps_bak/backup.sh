@@ -4,7 +4,7 @@
 # 用于执行备份任务并上传到S3兼容存储
 #
 
-VERSION="1.0.1"
+VERSION="1.0.2"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
 RCLONE_CONFIG="$SCRIPT_DIR/rclone.conf"
@@ -124,6 +124,11 @@ if [ "$compression" == "tar.gz" ]; then
     # 使用tar创建归档
     tar_args="-czf"
     tar_args+=" $archive_file"
+    
+    # 添加tar选项以处理文件变化和读取错误
+    # --warning=no-file-changed: 允许备份过程中文件发生变化（如活跃的数据库文件）
+    # --ignore-failed-read: 忽略读取错误，确保备份流程能够完成
+    tar_args+=" --warning=no-file-changed --ignore-failed-read"
     
     # 添加要备份的目录
     for dir in "${dirs_to_backup[@]}"; do
