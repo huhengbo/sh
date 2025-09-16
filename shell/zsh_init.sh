@@ -406,7 +406,7 @@ configure_zshrc() {
         
         # 更新插件列表
         local plugin_str="zsh-syntax-highlighting zsh-autosuggestions zsh-history-substring-search zsh-completions"
-        sed -i'.tmp' "s/^plugins=(.*)/plugins=($plugin_str)/" "$zshrc"
+        sed -i'.tmp' -E "s/^plugins=\(.*\)$/plugins=($plugin_str)/" "$zshrc"
         
         # 删除临时文件
         rm -f "${zshrc}.tmp"
@@ -610,6 +610,21 @@ show_menu() {
     esac
 }
 
+# 在非交互环境中更新 Oh My Zsh
+run_omz_update() {
+    if command -v zsh &>/dev/null; then
+        if ZSH="$HOME/.oh-my-zsh" zsh -ic "ZSH='$HOME/.oh-my-zsh'; if typeset -f omz >/dev/null; then omz update; elif [ -f \"\$ZSH/tools/upgrade.sh\" ]; then source \"\$ZSH/tools/upgrade.sh\"; else exit 0; fi"; then
+            return 0
+        fi
+    fi
+
+    if [ -f "$HOME/.oh-my-zsh/tools/upgrade.sh" ]; then
+        bash "$HOME/.oh-my-zsh/tools/upgrade.sh" && return 0
+    fi
+
+    return 1
+}
+
 # 更新组件
 update_components() {
     log "开始更新组件..."
@@ -617,7 +632,9 @@ update_components() {
     # 更新 Oh My Zsh
     if [ -d "$HOME/.oh-my-zsh" ]; then
         log "更新 Oh My Zsh..."
-        omz update || warn "Oh My Zsh 更新失败"
+        if ! run_omz_update; then
+            warn "Oh My Zsh 更新失败"
+        fi
     fi
     
     # 更新 Powerlevel10k

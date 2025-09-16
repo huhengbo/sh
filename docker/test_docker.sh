@@ -1,40 +1,56 @@
 #!/bin/bash
 
-# Update package index
-sudo apt-get update
+set -euo pipefail
 
-# Install necessary packages
-sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+if [ "$EUID" -ne 0 ]; then
+    echo "请使用 root 权限运行此脚本。" >&2
+    exit 1
+fi
 
-# Add Docker's official GPG key
-curl -fsSL https://download.docker.com/linux/debian/gpg | sudo apt-key add -
+cat <<'WARN'
+警告: 本示例脚本会在 2375 端口上暴露 Docker 守护进程且不启用 TLS, 仅供隔离测试环境使用, 请勿在生产环境执行。
+WARN
 
-# Add Docker's official APT repository
-sudo add-apt-repository \
-   "deb [arch=amd64] https://download.docker.com/linux/debian \
-   $(lsb_release -cs) \
-   stable"
+# 更新软件源并安装基础依赖
+apt-get update
+apt-get install -y apt-transport-https ca-certificates curl gnupg
 
-# Update package index again
-sudo apt-get update
+# 导入 Docker 官方 GPG 密钥
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod 0644 /etc/apt/keyrings/docker.gpg
 
-# Install Docker CE
-sudo apt-get install -y docker-ce
+# 解析发行版信息
+. /etc/os-release
+codename=${VERSION_CODENAME:-}
+if [ -z "$codename" ] && command -v lsb_release >/dev/null 2>&1; then
+    codename=$(lsb_release -cs)
+fi
+if [ -z "$codename" ]; then
+    echo "无法识别当前系统的发行版代号" >&2
+    exit 1
+fi
 
-# Enable Docker service
-sudo systemctl enable docker
+# 写入 Docker 官方仓库
+cat <<EOF_REPO >/etc/apt/sources.list.d/docker.list
+deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$ID $codename stable
+EOF_REPO
 
-# Start Docker service
-sudo systemctl start docker
+apt-get update
+apt-get install -y docker-ce
 
-# Configure Docker to listen on TCP port 2375 without TLS
-sudo mkdir -p /etc/systemd/system/docker.service.d
-echo "[Service]
+systemctl enable docker
+systemctl start docker
+
+# 创建 systemd override 文件, 暴露 2375 端口（未加密）
+mkdir -p /etc/systemd/system/docker.service.d
+cat <<'EOF_OVERRIDE' >/etc/systemd/system/docker.service.d/override.conf
+[Service]
 ExecStart=
-ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375" | sudo tee /etc/systemd/system/docker.service.d/override.conf
+ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375
+EOF_OVERRIDE
 
-# Reload systemd and restart Docker
-sudo systemctl daemon-reload
-sudo systemctl restart docker
+systemctl daemon-reload
+systemctl restart docker
 
-echo "Docker has been installed and configured to listen on port 2375 without TLS."
+echo "Docker 已安装完成并监听未加密的 2375 端口, 请务必在调试完成后恢复安全配置。"

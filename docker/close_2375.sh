@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 # 检查是否以 root 用户运行
 if [ "$EUID" -ne 0 ]; then
     echo "请使用 root 用户运行或使用 sudo 命令。"
@@ -47,15 +49,26 @@ fi
 # 定义全局变量，记录哪些文件被修改过，便于恢复
 MODIFIED_FILES=()
 
+# 将修改过的文件加入记录
+track_modified_file() {
+    local file=$1
+    for tracked in "${MODIFIED_FILES[@]}"; do
+        if [ "$tracked" = "$file" ]; then
+            return
+        fi
+    done
+    MODIFIED_FILES+=("$file")
+}
+
 # 检查 Docker 配置中的 2375 端口
 check_docker_config() {
-    local found=0
+    local found=false
     
     # 检查 daemon.json
     if [ -f /etc/docker/daemon.json ]; then
         if grep -q '"hosts":.*"tcp://0.0.0.0:2375"' /etc/docker/daemon.json; then
             echo "在 /etc/docker/daemon.json 中发现端口 2375"
-            found=1
+            found=true
         fi
     fi
     
@@ -64,7 +77,7 @@ check_docker_config() {
         if [ -f "$path" ]; then
             if grep -q ' -H tcp://0.0.0.0:2375' "$path" || grep -q ' --host tcp://0.0.0.0:2375' "$path"; then
                 echo "在 $path 中发现端口 2375"
-                found=1
+                found=true
             fi
         fi
     done
@@ -75,7 +88,7 @@ check_docker_config() {
             if [ -f "$file" ]; then
                 if grep -q ' -H tcp://0.0.0.0:2375' "$file" || grep -q ' --host tcp://0.0.0.0:2375' "$file"; then
                     echo "在 $file 中发现端口 2375"
-                    found=1
+                    found=true
                 fi
             fi
         done
@@ -85,21 +98,24 @@ check_docker_config() {
     if [ -f /etc/systemd/system/docker.socket ]; then
         if grep -q 'ListenStream=2375' /etc/systemd/system/docker.socket; then
             echo "在 /etc/systemd/system/docker.socket 中发现端口 2375"
-            found=1
+            found=true
         fi
     fi
     
-    return $found
+    if [ "$found" = true ]; then
+        return 0
+    fi
+
+    return 1
 }
 
 # 判断docker是否开放2375端口
 check_docker_port() {
-    # 检查 Docker 配置
     if check_docker_config; then
-        return 1
+        return 0
     fi
     
-    return 0
+    return 1
 }
 
 # 备份配置文件
@@ -134,6 +150,7 @@ backup_all_files() {
 # 更新daemon.json文件以移除2375端口
 update_daemon_json() {
     if [ -f /etc/docker/daemon.json ]; then
+        local current_config
         current_config=$(cat /etc/docker/daemon.json)
 
         # 安装jq
@@ -141,9 +158,18 @@ update_daemon_json() {
             return 1
         fi
 
-        # 移除2375端口配置
-        updated_config=$(echo "$current_config" | jq 'if .hosts then .hosts -= ["tcp://0.0.0.0:2375"] else . end')
+        # 移除2375端口配置，并在 hosts 为空数组时删除该字段
+        local updated_config
+        updated_config=$(echo "$current_config" | jq '
+            if .hosts then
+                .hosts -= ["tcp://0.0.0.0:2375"]
+                | (if (.hosts | length) == 0 then del(.hosts) else . end)
+            else
+                .
+            end
+        ')
         echo "$updated_config" | tee /etc/docker/daemon.json > /dev/null
+        track_modified_file /etc/docker/daemon.json
     fi
 }
 
@@ -152,7 +178,10 @@ update_docker_service_files() {
     # 更新主要的 docker.service 文件
     for path in /usr/lib/systemd/system/docker.service /lib/systemd/system/docker.service; do
         if [ -f "$path" ]; then
-            sed -i -E 's/ (-H|--host)[ =]tcp:\/\/0.0.0.0:2375//g' "$path"
+            if grep -q 'tcp://0.0.0.0:2375' "$path"; then
+                sed -i -E 's/ (-H|--host)[ =]tcp:\/\/0.0.0.0:2375//g' "$path"
+                track_modified_file "$path"
+            fi
         fi
     done
 
@@ -160,15 +189,21 @@ update_docker_service_files() {
     if [ -d /etc/systemd/system/docker.service.d/ ]; then
         for file in /etc/systemd/system/docker.service.d/*; do
             if [ -f "$file" ]; then
-                sed -i 's/ -H tcp:\/\/0.0.0.0:2375//g' "$file"
-                sed -i 's/ --host tcp:\/\/0.0.0.0:2375//g' "$file"
+                if grep -q 'tcp://0.0.0.0:2375' "$file"; then
+                    sed -i 's/ -H tcp:\/\/0.0.0.0:2375//g' "$file"
+                    sed -i 's/ --host tcp:\/\/0.0.0.0:2375//g' "$file"
+                    track_modified_file "$file"
+                fi
             fi
         done
     fi
     
     # 更新 docker.socket 文件
     if [ -f /etc/systemd/system/docker.socket ]; then
-        sed -i 's/ListenStream=2375/ListenStream=2376/g' /etc/systemd/system/docker.socket
+        if grep -q 'ListenStream=2375' /etc/systemd/system/docker.socket; then
+            sed -i '/ListenStream=2375/d' /etc/systemd/system/docker.socket
+            track_modified_file /etc/systemd/system/docker.socket
+        fi
     fi
 }
 

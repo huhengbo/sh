@@ -9,8 +9,33 @@ log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
 
+# 权限检查
+if [ "$EUID" -ne 0 ]; then
+    echo "请使用 root 权限运行此脚本。" >&2
+    exit 1
+fi
+
+# 检查 chattr 命令是否可用
+if command -v chattr &>/dev/null; then
+    CHATTR_AVAILABLE=true
+else
+    CHATTR_AVAILABLE=false
+fi
+
+# 移除不可变属性的辅助函数
+clear_immutable() {
+    local target="$1"
+    if [ "$CHATTR_AVAILABLE" = true ] && [ -e "$target" ]; then
+        chattr -i "$target" 2>/dev/null || log_message "警告: 无法去除 $target 的不可变属性"
+    fi
+}
+
 # 创建备份目录
 mkdir -p "$BACKUP_DIR"
+
+if [ "$CHATTR_AVAILABLE" = false ]; then
+    log_message "警告: 未找到 chattr 命令，将跳过不可变属性恢复操作"
+fi
 
 # 备份文件函数
 backup_file() {
@@ -22,15 +47,15 @@ backup_file() {
 }
 
 # 查看 /etc/ld.so.preload 内容
-log_message "检查 /etc/ld.so.preload 内容:"
-cat /etc/ld.so.preload | tee -a "$LOG_FILE"
-
-# 确认 /etc/ld.so.preload 是否存在并处理权限
 if [ -f /etc/ld.so.preload ]; then
+    log_message "检查 /etc/ld.so.preload 内容:"
+    tee -a "$LOG_FILE" < /etc/ld.so.preload
     backup_file "/etc/ld.so.preload"
-    chattr -i /etc/ld.so.preload
+    clear_immutable "/etc/ld.so.preload"
     echo '' > /etc/ld.so.preload
     log_message "/etc/ld.so.preload 文件已清空"
+else
+    log_message "/etc/ld.so.preload 文件不存在，跳过内容检查"
 fi
 
 # 删除特定恶意文件并解除权限限制
@@ -120,7 +145,7 @@ files_to_remove=(
 for file in "${files_to_remove[@]}"; do
     if [ -f "$file" ] || [ -d "$file" ]; then
         backup_file "$file"
-        chattr -i "$file"
+        clear_immutable "$file"
         rm -rf "$file"
         log_message "$file 已删除"
     fi

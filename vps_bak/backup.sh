@@ -123,36 +123,47 @@ echo -e "${BLUE}创建备份归档...${NC}"
 # 根据压缩方式选择不同的命令
 if [ "$compression" == "tar.gz" ]; then
     archive_file="$TEMP_DIR/${backup_file_name}.tar.gz"
-    
-    # 使用tar创建归档
-    tar_args="-czf"
-    tar_args+=" $archive_file"
-    
-    # 添加tar选项以处理文件变化和读取错误
-    # --warning=no-file-changed: 允许备份过程中文件发生变化（如活跃的数据库文件）
-    # --ignore-failed-read: 忽略读取错误，确保备份流程能够完成
-    tar_args+=" --warning=no-file-changed --ignore-failed-read"
-    
-    # 添加要备份的目录
+
+    # 判断 tar 是否支持 GNU 扩展选项
+    if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
+        TAR_SUPPORTS_GNU=true
+    else
+        TAR_SUPPORTS_GNU=false
+    fi
+
+    # 构建 tar 命令参数数组
+    tar_cmd=(tar -czf "$archive_file")
+    if [ "$TAR_SUPPORTS_GNU" = true ]; then
+        tar_cmd+=(--warning=no-file-changed --ignore-failed-read)
+    fi
+
+    valid_sources=0
     for dir in "${dirs_to_backup[@]}"; do
-        # 移除目录路径末尾的斜杠（如果有）
         dir=${dir%/}
-        
         if [ -d "$dir" ]; then
-            tar_args+=" -C $(dirname "$dir") $(basename "$dir")"
+            tar_cmd+=( -C "$(dirname "$dir")" "$(basename "$dir")" )
+            valid_sources=$((valid_sources + 1))
         fi
     done
-    
-    # 执行tar命令
-    echo "执行命令: tar $tar_args"
-    eval "tar $tar_args"
-    tar_exit_code=$?
-    
-    # 输出调试信息
+
+    if [ $valid_sources -eq 0 ]; then
+        echo -e "${RED}错误: 未找到任何有效的备份目录${NC}"
+        exit 1
+    fi
+
+    printf '执行命令:'
+    printf ' %q' "${tar_cmd[@]}"
+    echo
+
+    tar_exit_code=0
+    if ! "${tar_cmd[@]}"; then
+        tar_exit_code=$?
+    fi
+
     echo "tar命令返回值: $tar_exit_code"
     echo "检查归档文件是否存在: $archive_file"
     ls -l "$archive_file" 2>/dev/null || echo "文件不存在"
-    
+
 elif [ "$compression" == "zip" ]; then
     archive_file="$TEMP_DIR/${backup_file_name}.zip"
     
