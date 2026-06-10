@@ -19,6 +19,15 @@ readonly NC='\033[0m' # No Color
 # 版本信息
 readonly SCRIPT_VERSION="1.0.0"
 readonly MIN_ZSH_VERSION="5.0"
+readonly MIN_FONT_FILE_BYTES=1000000
+readonly DEFAULT_GITHUB_PROBE_CONNECT_TIMEOUT=5
+readonly DEFAULT_GITHUB_PROBE_MAX_TIME=12
+readonly DEFAULT_GITHUB_MIRROR_PREFIXES="https://gh-proxy.com/,https://ghproxy.net/,https://ghfast.top/,https://v6.gh-proxy.org/"
+
+SUDO_CMD=""
+RHEL_PACKAGE_MANAGER=""
+INSTALL_NERD_FONTS=true
+SELECTED_GIT_URL=""
 
 # 日志函数
 log() {
@@ -38,6 +47,33 @@ error() {
     exit 1
 }
 
+run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+        return
+    fi
+
+    if [ -z "$SUDO_CMD" ]; then
+        error "需要 sudo 权限"
+    fi
+
+    "$SUDO_CMD" "$@"
+}
+
+configure_privilege() {
+    if [ "$(id -u)" -eq 0 ]; then
+        SUDO_CMD=""
+        return
+    fi
+
+    if command -v sudo &>/dev/null && sudo -v; then
+        SUDO_CMD="sudo"
+        return
+    fi
+
+    error "需要 sudo 权限"
+}
+
 # 错误处理
 if [ -n "$BASH_VERSION" ]; then
     # 只在 bash 中设置 ERR 和 INT TERM 陷阱
@@ -53,16 +89,17 @@ check_requirements() {
     log "检查系统要求..."
     
     # 检测操作系统（如果还没有检测过）
-    if [ -z "${OS:-}" ]; then
-        detect_os
-    fi
+    ensure_os_detected
+
+    configure_privilege
     
     # 检查并安装必要工具
     install_required_tools "$OS"
-    
-    # 检查 sudo 权限
-    if ! sudo -v; then
-        error "需要 sudo 权限"
+}
+
+ensure_os_detected() {
+    if [ -z "${OS:-}" ]; then
+        detect_os
     fi
 }
 
@@ -79,7 +116,7 @@ detect_os() {
         os_id="$ID"
         case "$os_id" in
             ubuntu|debian) OS="Debian" ;;
-            centos|rhel|fedora) OS="CentOS" ;;
+            alinux|anolis|centos|rhel|fedora|rocky|almalinux) OS="CentOS" ;;
             *) OS="Unknown" ;;
         esac
     else
@@ -91,6 +128,106 @@ detect_os() {
     fi
     
     info "检测到操作系统: $OS"
+}
+
+detect_rhel_package_manager() {
+    if command -v dnf &>/dev/null; then
+        RHEL_PACKAGE_MANAGER="dnf"
+        return
+    fi
+
+    if command -v yum &>/dev/null; then
+        RHEL_PACKAGE_MANAGER="yum"
+        return
+    fi
+
+    error "无法找到 dnf 或 yum，请确保系统为 RHEL/CentOS/Alibaba Cloud Linux 系列"
+}
+
+is_github_url() {
+    case "$1" in
+        https://github.com/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+git_url_available() {
+    local repo_url=$1
+    local connect_timeout="${GITHUB_PROBE_CONNECT_TIMEOUT:-$DEFAULT_GITHUB_PROBE_CONNECT_TIMEOUT}"
+    local max_time="${GITHUB_PROBE_MAX_TIME:-$DEFAULT_GITHUB_PROBE_MAX_TIME}"
+
+    curl -fsSL \
+        --connect-timeout "$connect_timeout" \
+        --max-time "$max_time" \
+        -o /dev/null \
+        "$repo_url/info/refs?service=git-upload-pack"
+}
+
+build_mirror_url() {
+    local mirror_prefix=$1
+    local repo_url=$2
+
+    if [[ "$mirror_prefix" == *"{url}"* ]]; then
+        printf '%s\n' "${mirror_prefix/\{url\}/$repo_url}"
+        return
+    fi
+
+    printf '%s%s\n' "$mirror_prefix" "$repo_url"
+}
+
+get_github_mirror_prefixes() {
+    local raw_prefixes="${GITHUB_MIRROR_PREFIXES:-$DEFAULT_GITHUB_MIRROR_PREFIXES}"
+    local old_ifs=$IFS
+
+    IFS=','
+    read -r -a GITHUB_MIRROR_LIST <<< "$raw_prefixes"
+    IFS=$old_ifs
+}
+
+select_git_url() {
+    local repo_url=$1
+    SELECTED_GIT_URL="$repo_url"
+
+    if ! is_github_url "$repo_url"; then
+        return
+    fi
+
+    log "检测 GitHub 访问: $repo_url"
+    if git_url_available "$repo_url"; then
+        info "使用 GitHub 直连: $repo_url"
+        return
+    fi
+
+    warn "GitHub 直连不可用，尝试镜像..."
+    get_github_mirror_prefixes
+    local mirror_prefix
+    for mirror_prefix in "${GITHUB_MIRROR_LIST[@]}"; do
+        [ -z "$mirror_prefix" ] && continue
+        local mirror_url
+        mirror_url=$(build_mirror_url "$mirror_prefix" "$repo_url")
+        if git_url_available "$mirror_url"; then
+            SELECTED_GIT_URL="$mirror_url"
+            info "使用 GitHub 镜像: $mirror_prefix"
+            return
+        fi
+        warn "镜像不可用: $mirror_prefix"
+    done
+
+    warn "没有可用镜像，将使用原始 URL 暴露 git 错误"
+}
+
+clone_or_update_git_repo() {
+    local repo_url=$1
+    local target_dir=$2
+
+    select_git_url "$repo_url"
+    if [ ! -d "$target_dir" ]; then
+        git clone --depth=1 "$SELECTED_GIT_URL" "$target_dir"
+        return
+    fi
+
+    git -C "$target_dir" remote set-url origin "$SELECTED_GIT_URL"
+    git -C "$target_dir" pull
 }
 
 # 安装必要工具
@@ -129,22 +266,22 @@ install_required_tools() {
             fi
             if ! command -v curl &>/dev/null || ! command -v git &>/dev/null || ! command -v wget &>/dev/null; then
                 log "安装必要工具..."
-                sudo apt-get update
-                sudo apt-get install -y curl git wget
+                run_as_root apt-get update
+                run_as_root apt-get install -y curl git wget
             fi
             ;;
         CentOS)
-            if ! command -v yum &>/dev/null; then
-                error "无法找到 yum，请确保系统为 CentOS/RHEL 系列"
-            fi
+            detect_rhel_package_manager
             if ! command -v sudo &>/dev/null; then
                 log "安装 sudo..."
-                yum install -y sudo
+                "$RHEL_PACKAGE_MANAGER" install -y sudo
             fi
             if ! command -v curl &>/dev/null || ! command -v git &>/dev/null || ! command -v wget &>/dev/null; then
                 log "安装必要工具..."
-                sudo yum install -y epel-release
-                sudo yum install -y curl git wget
+                if [ "$RHEL_PACKAGE_MANAGER" = "yum" ]; then
+                    run_as_root yum install -y epel-release
+                fi
+                run_as_root "$RHEL_PACKAGE_MANAGER" install -y curl git wget
             fi
             ;;
         *) error "不支持的操作系统: $os" ;;
@@ -182,10 +319,7 @@ install_package_manager() {
             fi
             ;;
         CentOS)
-            # 确保 yum 可用
-            if ! command -v yum &>/dev/null; then
-                error "无法找到 yum，请确保系统为 CentOS/RHEL 系列"
-            fi
+            detect_rhel_package_manager
             ;;
         *) error "不支持的操作系统: $os" ;;
     esac
@@ -201,10 +335,10 @@ install_base_packages() {
             brew install zsh git curl wget
             ;;
         Debian)
-            sudo apt install -y zsh git curl wget fonts-powerline
+            run_as_root apt install -y zsh git curl wget fonts-powerline
             ;;
         CentOS)
-            sudo yum install -y zsh git curl wget fontconfig
+            run_as_root "$RHEL_PACKAGE_MANAGER" install -y zsh git curl wget fontconfig
             ;;
         *) error "不支持的操作系统: $os" ;;
     esac
@@ -234,7 +368,7 @@ add_zsh_to_shells() {
     zsh_path=$(which zsh)
     
     if ! grep -Fxq "$zsh_path" /etc/shells; then
-        echo "$zsh_path" | sudo tee -a /etc/shells
+        printf '%s\n' "$zsh_path" | run_as_root tee -a /etc/shells >/dev/null
     fi
 }
 
@@ -258,18 +392,12 @@ install_ohmyzsh() {
     if [ ! -d "$HOME/.oh-my-zsh" ]; then
         # 设置环境变量以自动确认
         export CHSH=yes
-        RUNZSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+        select_git_url "https://github.com/ohmyzsh/ohmyzsh.git"
+        RUNZSH=no KEEP_ZSHRC=yes REMOTE="$SELECTED_GIT_URL" sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
     else
-        # 使用 bash 更新 Oh My Zsh，而不是 sh
-        if [ -f "$HOME/.oh-my-zsh/tools/upgrade.sh" ]; then
-            if command -v bash &>/dev/null; then
-                bash "$HOME/.oh-my-zsh/tools/upgrade.sh" || warn "Oh My Zsh 更新失败，继续安装..."
-            else
-                warn "未找到 bash，跳过 Oh My Zsh 更新..."
-            fi
-        else
-            warn "Oh My Zsh 更新脚本不存在，跳过更新..."
-        fi
+        select_git_url "https://github.com/ohmyzsh/ohmyzsh.git"
+        git -C "$HOME/.oh-my-zsh" remote set-url origin "$SELECTED_GIT_URL"
+        run_omz_update || warn "Oh My Zsh 更新失败，继续安装..."
     fi
 }
 
@@ -278,11 +406,7 @@ install_powerlevel10k() {
     log "安装 Powerlevel10k 主题..."
     
     local p10k_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"
-    if [ ! -d "$p10k_dir" ]; then
-        git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$p10k_dir" || error "Powerlevel10k 安装失败"
-    else
-        git -C "$p10k_dir" pull || warn "Powerlevel10k 更新失败，继续安装..."
-    fi
+    clone_or_update_git_repo "https://github.com/romkatv/powerlevel10k.git" "$p10k_dir" || error "Powerlevel10k 安装失败"
 }
 
 # 配置 Powerlevel10k
@@ -316,6 +440,11 @@ configure_powerlevel10k() {
 # 安装 Nerd Fonts
 install_nerdfonts() {
     log "安装 Nerd Fonts..."
+
+    if [ "$INSTALL_NERD_FONTS" = "false" ]; then
+        warn "已按参数跳过 Nerd Fonts 安装"
+        return
+    fi
     
     local fonts=(
         "MesloLGS%20NF%20Regular.ttf"
@@ -346,15 +475,37 @@ install_nerdfonts() {
         local font_url="https://github.com/romkatv/powerlevel10k-media/raw/master/${fonts[$i]}"
         local font_dest="$font_dir/${font_names[$i]}"
         
-        if [ ! -f "$font_dest" ]; then
-            log "下载字体 ${font_names[$i]}..."
-            curl -fLo "$font_dest" --create-dirs "$font_url" || warn "字体 ${font_names[$i]} 下载失败"
+        if ! font_file_is_complete "$font_dest"; then
+            download_font "$font_url" "$font_dest" "${font_names[$i]}"
         fi
     done
     
     if [ "$OS" != "macOS" ]; then
         fc-cache -f || warn "字体缓存更新失败"
     fi
+}
+
+font_file_is_complete() {
+    local font_path=$1
+
+    [ -f "$font_path" ] && [ "$(wc -c < "$font_path")" -ge "$MIN_FONT_FILE_BYTES" ]
+}
+
+download_font() {
+    local font_url=$1
+    local font_dest=$2
+    local font_name=$3
+    local font_tmp="${font_dest}.tmp.$$"
+
+    log "下载字体 $font_name..."
+    rm -f "$font_tmp"
+    if ! curl -fLo "$font_tmp" --create-dirs "$font_url"; then
+        rm -f "$font_tmp"
+        warn "字体 $font_name 下载失败"
+        return
+    fi
+
+    mv "$font_tmp" "$font_dest" || error "无法写入字体 $font_name"
 }
 
 # 安装插件
@@ -373,11 +524,7 @@ install_plugins() {
         local url="${plugin#*:}"
         local dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$name"
         
-        if [ ! -d "$dir" ]; then
-            git clone --depth=1 "$url" "$dir" || warn "插件 $name 安装失败"
-        else
-            git -C "$dir" pull || warn "插件 $name 更新失败"
-        fi
+        clone_or_update_git_repo "$url" "$dir" || warn "插件 $name 安装/更新失败"
     done
 }
 
@@ -476,6 +623,8 @@ cleanup() {
 # 卸载函数
 uninstall() {
     log "开始卸载..."
+
+    ensure_os_detected
     
     # 恢复原始 shell
     if [ -f "${HOME}/.zshrc.bak" ]; then
@@ -498,6 +647,11 @@ uninstall() {
     esac
     
     info "卸载完成"
+}
+
+return_to_menu() {
+    read -p "按回车键继续..."
+    show_menu
 }
 
 # 检查已安装的组件
@@ -592,12 +746,15 @@ show_menu() {
     case "$choice" in
         1)
             main
+            return_to_menu
             ;;
         2)
             uninstall
+            return_to_menu
             ;;
         3)
             update_components
+            return_to_menu
             ;;
         4)
             exit 0
@@ -640,7 +797,9 @@ update_components() {
     # 更新 Powerlevel10k
     if [ -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" ]; then
         log "更新 Powerlevel10k..."
-        git -C "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" pull || warn "Powerlevel10k 更新失败"
+        clone_or_update_git_repo \
+            "https://github.com/romkatv/powerlevel10k.git" \
+            "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" || warn "Powerlevel10k 更新失败"
     fi
     
     # 更新插件
@@ -654,13 +813,13 @@ update_components() {
     for plugin in "${plugins[@]}"; do
         if [ -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$plugin" ]; then
             log "更新插件 $plugin..."
-            git -C "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$plugin" pull || warn "插件 $plugin 更新失败"
+            clone_or_update_git_repo \
+                "https://github.com/zsh-users/$plugin.git" \
+                "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/$plugin" || warn "插件 $plugin 更新失败"
         fi
     done
     
     info "更新完成！"
-    read -p "按回车键继续..."
-    show_menu
 }
 
 # 主函数
@@ -703,10 +862,68 @@ main() {
     info "安装完成！"
     info "请重启终端或运行: source ~/.zshrc"
     info "已设置 Powerlevel10k 默认主题，如需自定义请运行: p10k configure"
-    
-    read -p "按回车键继续..."
-    show_menu
 }
 
-# 直接启动菜单
-show_menu
+print_usage() {
+    cat << EOF
+用法: bash zsh_init.sh [install|update|uninstall|menu] [--skip-fonts]
+
+命令:
+  install    安装或更新 Zsh 环境
+  update     仅更新已安装组件
+  uninstall  卸载 Zsh 环境
+  menu       打开交互菜单
+
+选项:
+  --skip-fonts  跳过 Nerd Fonts 下载，适合服务器或网络较慢环境
+
+环境变量:
+  GITHUB_MIRROR_PREFIXES          逗号分隔的镜像前缀，默认: $DEFAULT_GITHUB_MIRROR_PREFIXES
+  GITHUB_PROBE_CONNECT_TIMEOUT    GitHub 探测连接超时秒数，默认 $DEFAULT_GITHUB_PROBE_CONNECT_TIMEOUT
+  GITHUB_PROBE_MAX_TIME           GitHub 探测总超时秒数，默认 $DEFAULT_GITHUB_PROBE_MAX_TIME
+EOF
+}
+
+run_entrypoint() {
+    local action="menu"
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            install|update|uninstall|menu|-h|--help|help)
+                action="$1"
+                ;;
+            --skip-fonts)
+                INSTALL_NERD_FONTS=false
+                ;;
+            *)
+                print_usage
+                error "未知参数: $1"
+                ;;
+        esac
+        shift
+    done
+
+    case "$action" in
+        install)
+            main
+            ;;
+        update)
+            update_components
+            ;;
+        uninstall)
+            uninstall
+            ;;
+        menu)
+            show_menu
+            ;;
+        -h|--help|help)
+            print_usage
+            ;;
+        *)
+            print_usage
+            error "未知命令: $action"
+            ;;
+    esac
+}
+
+run_entrypoint "$@"
