@@ -46,6 +46,16 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
+if ! command -v rclone &> /dev/null; then
+    echo -e "${RED}错误: 未安装rclone。请先安装rclone。${NC}"
+    exit 1
+fi
+
+if ! jq empty "$CONFIG_FILE" >/dev/null 2>&1; then
+    echo -e "${RED}错误: 配置文件不是有效JSON ($CONFIG_FILE)${NC}"
+    exit 1
+fi
+
 remote=$(jq -r '.remote // ""' "$CONFIG_FILE")
 bucket=$(jq -r '.bucket // ""' "$CONFIG_FILE")
 backup_name=$(jq -r '.backup_name // "default"' "$CONFIG_FILE")
@@ -61,6 +71,16 @@ fi
 
 if [ "$backup_dirs" == "[]" ] || [ -z "$backup_dirs" ]; then
     echo -e "${RED}错误: 没有指定要备份的目录${NC}"
+    exit 1
+fi
+
+if ! [[ "$retention_days" =~ ^[0-9]+$ ]]; then
+    echo -e "${RED}错误: retention_days必须是非负整数，当前值: $retention_days${NC}"
+    exit 1
+fi
+
+if [ "$compression" != "tar.gz" ] && [ "$compression" != "zip" ]; then
+    echo -e "${RED}错误: 不支持的压缩方式 '$compression'${NC}"
     exit 1
 fi
 
@@ -99,7 +119,9 @@ echo -e "${BLUE}开始备份以下目录:${NC}"
 dirs_to_backup=()
 if [[ "$backup_dirs" == \[* ]]; then
     # 如果是JSON数组
-    readarray -t dirs_to_backup < <(echo "$backup_dirs" | jq -r '.[]')
+    while IFS= read -r dir; do
+        dirs_to_backup+=("$dir")
+    done < <(echo "$backup_dirs" | jq -r '.[]')
 else
     # 如果是空格分隔的字符串
     IFS=' ' read -ra dirs_to_backup <<< "$backup_dirs"
@@ -121,21 +143,13 @@ done
 echo -e "${BLUE}创建备份归档...${NC}"
 
 # 根据压缩方式选择不同的命令
+tar_exit_code=0
+zip_exit_code=0
 if [ "$compression" == "tar.gz" ]; then
     archive_file="$TEMP_DIR/${backup_file_name}.tar.gz"
 
-    # 判断 tar 是否支持 GNU 扩展选项
-    if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
-        TAR_SUPPORTS_GNU=true
-    else
-        TAR_SUPPORTS_GNU=false
-    fi
-
     # 构建 tar 命令参数数组
     tar_cmd=(tar -czf "$archive_file")
-    if [ "$TAR_SUPPORTS_GNU" = true ]; then
-        tar_cmd+=(--warning=no-file-changed --ignore-failed-read)
-    fi
 
     valid_sources=0
     for dir in "${dirs_to_backup[@]}"; do
@@ -156,7 +170,9 @@ if [ "$compression" == "tar.gz" ]; then
     echo
 
     tar_exit_code=0
-    if ! "${tar_cmd[@]}"; then
+    if "${tar_cmd[@]}"; then
+        tar_exit_code=0
+    else
         tar_exit_code=$?
     fi
 
@@ -166,13 +182,31 @@ if [ "$compression" == "tar.gz" ]; then
 
 elif [ "$compression" == "zip" ]; then
     archive_file="$TEMP_DIR/${backup_file_name}.zip"
+
+    if ! command -v zip &> /dev/null; then
+        echo -e "${RED}错误: 未安装zip，无法使用zip压缩方式${NC}"
+        exit 1
+    fi
     
     # 使用zip创建归档
+    valid_sources=0
     for dir in "${dirs_to_backup[@]}"; do
+        dir=${dir%/}
         if [ -d "$dir" ]; then
-            (cd "$(dirname "$dir")" && zip -r "$archive_file" "$(basename "$dir")") 
+            valid_sources=$((valid_sources + 1))
+            if (cd "$(dirname "$dir")" && zip -r "$archive_file" "$(basename "$dir")"); then
+                zip_exit_code=0
+            else
+                zip_exit_code=$?
+                break
+            fi
         fi
     done
+
+    if [ $valid_sources -eq 0 ]; then
+        echo -e "${RED}错误: 未找到任何有效的备份目录${NC}"
+        exit 1
+    fi
 else
     echo -e "${RED}错误: 不支持的压缩方式 '$compression'${NC}"
     exit 1
@@ -183,8 +217,14 @@ if [ ! -f "$archive_file" ]; then
     echo -e "${RED}错误: 创建备份归档失败 - 文件未生成${NC}"
     exit 1
 elif [ "$compression" == "tar.gz" ] && [ $tar_exit_code -ne 0 ]; then
-    echo -e "${YELLOW}警告: tar命令返回了非零状态码 ($tar_exit_code)，但归档文件已创建${NC}"
-    echo -e "${YELLOW}继续执行备份流程...${NC}"
+    echo -e "${RED}错误: tar命令失败，返回状态码: $tar_exit_code${NC}"
+    exit 1
+elif [ "$compression" == "zip" ] && [ $zip_exit_code -ne 0 ]; then
+    echo -e "${RED}错误: zip命令失败，返回状态码: $zip_exit_code${NC}"
+    exit 1
+elif [ "$(wc -c < "$archive_file")" -eq 0 ]; then
+    echo -e "${RED}错误: 创建备份归档失败 - 文件为空${NC}"
+    exit 1
 fi
 
 # 计算文件大小
@@ -201,26 +241,18 @@ echo "上传路径: $remote:$bucket/${upload_dir}"
 echo "文件名: ${filename}"
 echo "完整目标路径: $remote:$bucket/${upload_path}"
 
-# 使用copyto命令而不是copy，确保不会创建额外的目录
-rclone --config="$RCLONE_CONFIG" copyto "$archive_file" "$remote:$bucket/$upload_path"
-
-if [ $? -eq 0 ]; then
+if rclone --config="$RCLONE_CONFIG" copyto "$archive_file" "$remote:$bucket/$upload_path"; then
     echo -e "${GREEN}备份上传成功!${NC}"
     
     # 更新最后备份时间
-    jq ".last_backup = \"$(date '+%Y-%m-%d %H:%M:%S')\"" "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+    jq --arg last_backup "$(date '+%Y-%m-%d %H:%M:%S')" '.last_backup = $last_backup' "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
     
     # 清理旧备份 (如果设置了保留天数且大于0)
     if [ "$retention_days" -gt 0 ]; then
         echo -e "${BLUE}清理${retention_days}天前的旧备份...${NC}"
         
-        # 计算截止日期 (当前日期减去保留天数)
-        cutoff_date=$(date -d "-$retention_days days" +%Y-%m-%d)
-        
         # 使用rclone的date选项列出要删除的文件并删除它们
-        rclone --config="$RCLONE_CONFIG" delete "$remote:$bucket/$backup_name" --min-age "${retention_days}d" --rmdirs
-        
-        if [ $? -eq 0 ]; then
+        if rclone --config="$RCLONE_CONFIG" delete "$remote:$bucket/$backup_name" --min-age "${retention_days}d" --rmdirs; then
             echo -e "${GREEN}旧备份清理完成${NC}"
         else
             echo -e "${YELLOW}旧备份清理过程中出现错误${NC}"
@@ -237,4 +269,4 @@ echo "==============================================="
 echo "S3备份任务完成 - $(date)"
 echo "==============================================="
 
-exit 0 
+exit 0

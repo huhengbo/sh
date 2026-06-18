@@ -46,17 +46,58 @@ backup_file() {
     fi
 }
 
+is_malicious_preload_entry() {
+    case "$1" in
+        */libprocesshider.so|*/libcryptocoin.so|*/libloading.so|*/libsystemd.so|*/libtcs.so|*/libcset.so|*/top.so|*/masscan.so|*/pnscan.so|*/httpd.so|*/bioset.so|*/libsmoker.so)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+clean_ld_so_preload() {
+    local preload_file="/etc/ld.so.preload"
+    local tmp_file
+    local removed=false
+
+    if [ ! -f "$preload_file" ]; then
+        log_message "$preload_file 文件不存在，跳过内容检查"
+        return
+    fi
+
+    log_message "检查 $preload_file 内容:"
+    tee -a "$LOG_FILE" < "$preload_file"
+    backup_file "$preload_file"
+    clear_immutable "$preload_file"
+
+    tmp_file=$(mktemp) || {
+        log_message "错误: 无法创建临时文件，跳过 $preload_file 清理"
+        return 1
+    }
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if is_malicious_preload_entry "$line"; then
+            log_message "移除已知恶意 preload 条目: $line"
+            removed=true
+            continue
+        fi
+        printf '%s\n' "$line" >> "$tmp_file"
+    done < "$preload_file"
+
+    if [ "$removed" = true ]; then
+        cat "$tmp_file" > "$preload_file"
+        log_message "$preload_file 已移除已知恶意条目"
+    else
+        log_message "$preload_file 未发现已知恶意条目，保持原样"
+    fi
+
+    rm -f "$tmp_file"
+}
+
 # 查看 /etc/ld.so.preload 内容
-if [ -f /etc/ld.so.preload ]; then
-    log_message "检查 /etc/ld.so.preload 内容:"
-    tee -a "$LOG_FILE" < /etc/ld.so.preload
-    backup_file "/etc/ld.so.preload"
-    clear_immutable "/etc/ld.so.preload"
-    echo '' > /etc/ld.so.preload
-    log_message "/etc/ld.so.preload 文件已清空"
-else
-    log_message "/etc/ld.so.preload 文件不存在，跳过内容检查"
-fi
+clean_ld_so_preload
 
 # 删除特定恶意文件并解除权限限制
 files_to_remove=(
@@ -158,27 +199,46 @@ kill_process() {
     # 检查是否是路径
     if [[ "$process" == /* ]]; then
         # 使用完整路径进行精确匹配
-        local pids=$(ps aux | grep -v grep | grep "$process" | awk '{print $2}')
+        local pids=""
+        local exe
+        for exe in /proc/[0-9]*/exe; do
+            [ -e "$exe" ] || continue
+            local pid="${exe#/proc/}"
+            pid="${pid%/exe}"
+            local proc_path
+            proc_path=$(readlink -f "$exe" 2>/dev/null)
+            if [ "$proc_path" = "$process" ]; then
+                pids="$pids $pid"
+            fi
+        done
         if [ ! -z "$pids" ]; then
             for pid in $pids; do
-                # 检查进程路径
-                local proc_path=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
-                if [ "$proc_path" = "$process" ]; then
-                    kill -9 "$pid"
-                    log_message "进程 $process (PID: $pid) 已终止"
-                fi
+                kill -9 "$pid"
+                log_message "进程 $process (PID: $pid) 已终止"
             done
         fi
     else
         # 对于非路径的进程名，使用更多检查来避免误杀
         # 1. 检查确切的命令名称匹配
         # 2. 只终止可疑的进程（如 CPU 使用率高，非系统进程）
-        local pids=$(ps aux | grep -v grep | grep -w "$process" | awk '{if ($3 > 50.0 || $1 != "root" && $1 != "nobody" && $1 != "www-data") print $2}')
+        local pids=""
+        local proc_dir
+        for proc_dir in /proc/[0-9]*; do
+            [ -d "$proc_dir" ] || continue
+            local pid="${proc_dir#/proc/}"
+            local proc_name
+            proc_name=$(cat "$proc_dir/comm" 2>/dev/null)
+            if [ "$proc_name" = "$process" ]; then
+                pids="$pids $pid"
+            fi
+        done
         if [ ! -z "$pids" ]; then
             for pid in $pids; do
                 # 额外检查进程名
                 local proc_name=$(cat /proc/$pid/comm 2>/dev/null)
                 local cmdline=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
+                local proc_user=$(ps -p "$pid" -o user= 2>/dev/null | awk '{print $1}')
+                local cpu_high=$(ps -p "$pid" -o pcpu= 2>/dev/null | awk '{print ($1 > 50.0) ? "true" : "false"}')
                 
                 # 检查是否是已知的合法系统进程
                 if [[ "$proc_name" != "systemd" && "$proc_name" != "init" && 
@@ -190,7 +250,7 @@ kill_process() {
                     log_message "发现可疑进程: $proc_name (PID: $pid, cmdline: $cmdline)"
                     
                     # 仅当进程名精确匹配时才终止
-                    if [[ "$proc_name" == "$process" ]]; then
+                    if [[ "$proc_name" == "$process" && ( "$cpu_high" == "true" || "$proc_user" != "root" && "$proc_user" != "nobody" && "$proc_user" != "www-data" ) ]]; then
                         kill -9 "$pid"
                         log_message "已终止可疑进程: $proc_name (PID: $pid)"
                     fi

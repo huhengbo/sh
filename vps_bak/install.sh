@@ -26,6 +26,55 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # 无颜色
 
+run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+        return
+    fi
+
+    if command -v sudo &> /dev/null; then
+        sudo "$@"
+        return
+    fi
+
+    echo -e "${RED}需要root权限或sudo命令: $*${NC}"
+    return 1
+}
+
+detect_rhel_package_manager() {
+    if command -v dnf &> /dev/null; then
+        echo "dnf"
+        return
+    fi
+
+    if command -v yum &> /dev/null; then
+        echo "yum"
+        return
+    fi
+
+    return 1
+}
+
+install_rclone_official() {
+    if ! command -v curl &> /dev/null; then
+        echo -e "${RED}未找到curl，无法执行rclone官方安装脚本${NC}"
+        return 1
+    fi
+
+    if [ "$(id -u)" -eq 0 ]; then
+        curl -fsSL https://rclone.org/install.sh | bash
+        return
+    fi
+
+    if command -v sudo &> /dev/null; then
+        curl -fsSL https://rclone.org/install.sh | sudo bash
+        return
+    fi
+
+    echo -e "${RED}需要root权限或sudo命令安装rclone${NC}"
+    return 1
+}
+
 # 检查目录结构
 check_directories() {
     # 确保vps_bak目录存在
@@ -210,52 +259,62 @@ install_dependencies() {
     # 根据操作系统选择安装命令
     if [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]] || [[ "$OS" == *"Mint"* ]]; then
         echo "使用apt安装依赖..."
-        sudo apt update
+        run_as_root apt update
         
         # 安装wget
         if ! command -v wget &> /dev/null; then
             echo "安装wget..."
-            sudo apt install -y wget
+            run_as_root apt install -y wget
         fi
         
         # 安装jq
         if ! command -v jq &> /dev/null; then
             echo "安装jq..."
-            sudo apt install -y jq
+            run_as_root apt install -y jq
         fi
         
         # 安装rclone (如果apt源没有最新版，使用rclone官方安装脚本)
         if ! command -v rclone &> /dev/null; then
             echo "安装rclone..."
             if apt-cache show rclone &>/dev/null; then
-                sudo apt install -y rclone
+                run_as_root apt install -y rclone
             else
                 echo "使用rclone官方安装脚本..."
-                curl https://rclone.org/install.sh | sudo bash
+                if ! command -v curl &> /dev/null; then
+                    run_as_root apt install -y curl
+                fi
+                install_rclone_official
             fi
         fi
         
-    elif [[ "$OS" == *"CentOS"* ]] || [[ "$OS" == *"RedHat"* ]] || [[ "$OS" == *"Fedora"* ]]; then
+    elif [[ "$OS" == *"CentOS"* ]] || [[ "$OS" == *"RedHat"* ]] || [[ "$OS" == *"Fedora"* ]] || [[ "$OS" == *"Alibaba"* ]] || [[ "$OS" == *"Anolis"* ]] || [[ "$OS" == *"Rocky"* ]] || [[ "$OS" == *"AlmaLinux"* ]]; then
         echo "使用yum/dnf安装依赖..."
+        local package_manager
+        package_manager=$(detect_rhel_package_manager) || {
+            echo -e "${RED}未找到dnf或yum，无法自动安装依赖${NC}"
+            return 1
+        }
         
         # 安装wget
         if ! command -v wget &> /dev/null; then
             echo "安装wget..."
-            sudo yum install -y wget
+            run_as_root "$package_manager" install -y wget
         fi
         
         # 安装jq
         if ! command -v jq &> /dev/null; then
             echo "安装jq..."
-            sudo yum install -y epel-release
-            sudo yum install -y jq
+            if [ "$package_manager" = "yum" ]; then
+                run_as_root yum install -y epel-release
+            fi
+            run_as_root "$package_manager" install -y jq
         fi
         
         # 安装rclone
         if ! command -v rclone &> /dev/null; then
             echo "安装rclone..."
-            sudo yum install -y curl
-            curl https://rclone.org/install.sh | sudo bash
+            run_as_root "$package_manager" install -y curl
+            install_rclone_official
         fi
         
     elif [[ "$OS" == *"Darwin"* ]] || [[ "$OS" == *"macOS"* ]]; then
@@ -291,19 +350,19 @@ install_dependencies() {
         # 安装wget
         if ! command -v wget &> /dev/null; then
             echo "安装wget..."
-            sudo apk add wget
+            run_as_root apk add wget
         fi
         
         # 安装jq
         if ! command -v jq &> /dev/null; then
             echo "安装jq..."
-            sudo apk add jq
+            run_as_root apk add jq
         fi
         
         # 安装rclone
         if ! command -v rclone &> /dev/null; then
             echo "安装rclone..."
-            sudo apk add rclone
+            run_as_root apk add rclone
         fi
         
     else
@@ -590,7 +649,7 @@ configure_backup() {
     echo "请指定要备份的文件夹路径 (多个路径用空格分隔):"
     read -p "> " backup_dirs
     # 转换为JSON数组
-    dirs_json=$(echo "$backup_dirs" | tr ' ' '\n' | jq -R . | jq -s .)
+    dirs_json=$(echo "$backup_dirs" | tr ' ' '\n' | jq -R 'select(length > 0)' | jq -s .)
     update_config ".backup_dirs" "$dirs_json"
     
     # 配置备份时间
@@ -667,8 +726,9 @@ configure_backup() {
 
 # 更新配置文件中的特定项
 update_config() {
-    key=$1
-    value=$2
+    local key=$1
+    local value=$2
+    local tmp_file
     
     # 如果配置文件不存在，创建一个空的JSON对象
     if [ ! -f "$CONFIG_FILE" ]; then
@@ -680,9 +740,9 @@ update_config() {
     
     # 判断值是否已经是JSON格式(以[或{开头)
     if [[ "$value" == \[* ]] || [[ "$value" == \{* ]]; then
-        jq "$key = $value" "$CONFIG_FILE" > "$tmp_file"
+        jq --argjson value "$value" "$key = \$value" "$CONFIG_FILE" > "$tmp_file"
     else
-        jq "$key = \"$value\"" "$CONFIG_FILE" > "$tmp_file"
+        jq --arg value "$value" "$key = \$value" "$CONFIG_FILE" > "$tmp_file"
     fi
     
     # 检查jq命令是否成功
@@ -693,6 +753,12 @@ update_config() {
         rm "$tmp_file"
         return 1
     fi
+}
+
+write_crontab_without_marker() {
+    local cron_file=$1
+
+    crontab -l 2>/dev/null | grep -v "$CRON_JOB_MARKER" > "$cron_file" || true
 }
 
 # 检测是否为Alpine Linux系统
@@ -772,7 +838,8 @@ EOF
         else
             # 非Alpine系统，使用传统的crontab方式
             # 移除现有的cron作业
-            crontab -l 2>/dev/null | grep -v "$CRON_JOB_MARKER" > temp_cron
+            temp_cron=$(mktemp)
+            write_crontab_without_marker "$temp_cron"
             
             # 构建cron表达式
             CRON_EXPR=""
@@ -793,9 +860,13 @@ EOF
             esac
             
             # 添加新的cron作业
-            echo "$CRON_EXPR bash $(realpath "$BACKUP_SCRIPT") $CRON_JOB_MARKER" >> temp_cron
-            crontab temp_cron
-            rm temp_cron
+            echo "$CRON_EXPR bash $(realpath "$BACKUP_SCRIPT") $CRON_JOB_MARKER" >> "$temp_cron"
+            if ! crontab "$temp_cron"; then
+                rm "$temp_cron"
+                echo -e "${RED}安装cron作业失败${NC}"
+                return 1
+            fi
+            rm "$temp_cron"
             
             echo -e "${GREEN}备份计划已设置为$frequency ${backup_time} 执行${NC}"
         fi
@@ -822,9 +893,14 @@ uninstall_cron_job() {
     else
         # 非Alpine系统，使用传统的crontab方式
         if crontab -l 2>/dev/null | grep -q "$CRON_JOB_MARKER"; then
-            crontab -l | grep -v "$CRON_JOB_MARKER" > temp_cron
-            crontab temp_cron
-            rm temp_cron
+            temp_cron=$(mktemp)
+            write_crontab_without_marker "$temp_cron"
+            if ! crontab "$temp_cron"; then
+                rm "$temp_cron"
+                echo -e "${RED}卸载cron作业失败${NC}"
+                return 1
+            fi
+            rm "$temp_cron"
             echo -e "${GREEN}备份计划已卸载${NC}"
         else
             echo -e "${YELLOW}未找到备份计划${NC}"
@@ -1052,4 +1128,4 @@ main_menu() {
 }
 
 # 脚本入口
-main_menu "$@" 
+main_menu "$@"

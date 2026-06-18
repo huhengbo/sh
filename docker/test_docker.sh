@@ -7,6 +7,12 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+if [ "${1:-}" != "--i-understand-expose-2375" ]; then
+    echo "此脚本会暴露未加密的 Docker 2375 端口。" >&2
+    echo "仅隔离测试环境可执行；确认后使用参数: --i-understand-expose-2375" >&2
+    exit 1
+fi
+
 cat <<'WARN'
 警告: 本示例脚本会在 2375 端口上暴露 Docker 守护进程且不启用 TLS, 仅供隔离测试环境使用, 请勿在生产环境执行。
 WARN

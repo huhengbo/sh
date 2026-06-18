@@ -22,6 +22,8 @@ install_jq() {
     # 检查系统类型并选择安装命令
     if command_exists apt-get; then
         apt-get update && apt-get install -y jq
+    elif command_exists dnf; then
+        dnf install -y jq
     elif command_exists yum; then
         yum install -y jq
     elif command_exists apk; then
@@ -48,6 +50,7 @@ fi
 
 # 定义全局变量，记录哪些文件被修改过，便于恢复
 MODIFIED_FILES=()
+BACKUP_DIR="/var/backups/docker-2375-cleanup/$(date +%Y%m%d_%H%M%S)"
 
 # 将修改过的文件加入记录
 track_modified_file() {
@@ -122,8 +125,10 @@ check_docker_port() {
 backup_file() {
     local file=$1
     if [ -f "$file" ]; then
-        cp "$file" "$file.bak"
-        MODIFIED_FILES+=("$file")
+        local backup_path="$BACKUP_DIR/${file#/}"
+        mkdir -p "$(dirname "$backup_path")"
+        cp -a "$file" "$backup_path"
+        track_modified_file "$file"
     fi
 }
 
@@ -210,8 +215,9 @@ update_docker_service_files() {
 # 恢复备份的文件
 restore_backups() {
     for file in "${MODIFIED_FILES[@]}"; do
-        if [ -f "$file.bak" ]; then
-            mv "$file.bak" "$file"
+        local backup_path="$BACKUP_DIR/${file#/}"
+        if [ -f "$backup_path" ]; then
+            cp -a "$backup_path" "$file"
         fi
     done
 }
@@ -244,6 +250,9 @@ trap 'restore_backups; exit 1' ERR
 # 主程序
 if check_docker_port; then
     backup_all_files
+    if [ -d "$BACKUP_DIR" ]; then
+        echo "已备份 Docker 配置到: $BACKUP_DIR"
+    fi
     update_daemon_json
     update_docker_service_files
     reload_systemd
